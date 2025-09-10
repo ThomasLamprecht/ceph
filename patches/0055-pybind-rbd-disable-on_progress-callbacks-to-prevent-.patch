@@ -1,0 +1,168 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: "Max R. Carrara" <m.carrara@proxmox.com>
+Date: Tue, 9 Sep 2025 16:52:42 +0200
+Subject: [PATCH] pybind/rbd: disable on_progress callbacks to prevent MGR
+ segfaults
+
+Currently, *all* MGRs collectively segfault on Ceph v19.2.3 running on
+Debian Trixie if a client requests the removal of an RBD image from
+the RBD trash (#6635 [0]).
+
+After a lot of investigation, the cause of this still isn't clear to
+me; the most likely culprit are some internal changes to Python
+sub-interpreters that happened between Python versions 3.12 and 3.13.
+
+What leads me to this conclusion is the following:
+ 1. A user on our forum noted [1] that the issue disappeared as soon
+    as they set up a Ceph MGR inside a Debian Bookworm VM. Bookworm
+    has Python version 3.11, which is the version before any
+    substantial changes to sub-interpreters [2][3] were made.
+
+ 2. There is an upstream issue [4] regarding another segfault during
+    MGR startup. The author concluded that this problem is related to
+    sub-interpreters and opened another issue [5] on Python's issue
+    tracker that goes into more detail.
+
+    Even though this is for a completely different code path, it shows
+    that issues related to sub-interpreters are popping up elsewhere
+    at the very least.
+
+ 3. The segfault happens *inside* the Python interpreter:
+    #0  0x000078e04d89e95c __pthread_kill_implementation (libc.so.6 + 0x9495c)
+    #1  0x000078e04d849cc2 __GI_raise (libc.so.6 + 0x3fcc2)
+    #2  0x00005ab95de92658 reraise_fatal (/usr/bin/ceph-mgr + 0x32d658)
+    #3  0x000078e04d849df0 __restore_rt (libc.so.6 + 0x3fdf0)
+    #4  0x000078e04ef598b0 _Py_dict_lookup (libpython3.13.so.1.0 + 0x1598b0)
+    #5  0x000078e04efa1843 _PyDict_GetItemRef_KnownHash (libpython3.13.so.1.0 + 0x1a1843)
+    #6  0x000078e04efa1af5 _PyType_LookupRef (libpython3.13.so.1.0 + 0x1a1af5)
+    #7  0x000078e04efa216b _Py_type_getattro_impl (libpython3.13.so.1.0 + 0x1a216b)
+    #8  0x000078e04ef6f60d PyObject_GetAttr (libpython3.13.so.1.0 + 0x16f60d)
+    #9  0x000078e04f043f20 _PyEval_EvalFrameDefault (libpython3.13.so.1.0 + 0x243f20)
+    #10 0x000078e04ef109dd _PyObject_VectorcallTstate (libpython3.13.so.1.0 + 0x1109dd)
+    #11 0x000078e04f1d3442 _PyObject_VectorcallTstate (libpython3.13.so.1.0 + 0x3d3442)
+    #12 0x000078e03b74ffed __pyx_f_3rbd_progress_callback (rbd.cpython-313-x86_64-linux-gnu.so + 0xacfed)
+    #13 0x000078e03afcc8af _ZN6librbd19AsyncObjectThrottleINS_8ImageCtxEE13start_next_opEv (librbd.so.1 + 0x3cc8af)
+    #14 0x000078e03afccfed _ZN6librbd19AsyncObjectThrottleINS_8ImageCtxEE9start_opsEm (librbd.so.1 + 0x3ccfed)
+    #15 0x000078e03afafec6 _ZN6librbd9operation11TrimRequestINS_8ImageCtxEE19send_remove_objectsEv (librbd.so.1 + 0x3afec6)
+    #16 0x000078e03afb0560 _ZN6librbd9operation11TrimRequestINS_8ImageCtxEE19send_copyup_objectsEv (librbd.so.1 + 0x3b0560)
+    #17 0x000078e03afb2e16 _ZN6librbd9operation11TrimRequestINS_8ImageCtxEE15should_completeEi (librbd.so.1 + 0x3b2e16)
+    #18 0x000078e03afae379 _ZN6librbd12AsyncRequestINS_8ImageCtxEE8completeEi (librbd.so.1 + 0x3ae379)
+    #19 0x000078e03ada8c70 _ZN7Context8completeEi (librbd.so.1 + 0x1a8c70)
+    #20 0x000078e03afcdb1e _ZN7Context8completeEi (librbd.so.1 + 0x3cdb1e)
+    #21 0x000078e04d6e4716 _ZN8librados14CB_AioCompleteclEv (librados.so.2 + 0xd2716)
+    #22 0x000078e04d6e5705 _ZN5boost4asio6detail19scheduler_operation8completeEPvRKNS_6system10error_codeEm (librados.so.2 + 0xd3705)
+    #23 0x000078e04d6e5f8a _ZN5boost4asio19asio_handler_invokeINS0_6detail23strand_executor_service7invokerIKNS0_10io_context19basic_executor_typeISaIvELm0EEEvEEEEvRT_z (librados.so.2 + 0xd3f8a)
+    #24 0x000078e04d6fc598 _ZN5boost4asio6detail19scheduler_operation8completeEPvRKNS_6system10error_codeEm (librados.so.2 + 0xea598)
+    #25 0x000078e04d6e9a71 _ZN5boost4asio6detail9scheduler3runERNS_6system10error_codeE (librados.so.2 + 0xd7a71)
+    #26 0x000078e04d6fff63 _ZN5boost4asio10io_context3runEv (librados.so.2 + 0xedf63)
+    #27 0x000078e04dae1224 n/a (libstdc++.so.6 + 0xe1224)
+    #28 0x000078e04d89cb7b start_thread (libc.so.6 + 0x92b7b)
+    #29 0x000078e04d91a7b8 __clone3 (libc.so.6 + 0x1107b8)
+
+    Note that in #12, you can see that a "progress callback" is being
+    called by librbd. This callback is a plain Python function that is
+    passed down via Ceph's Python/C++ bindings for librbd [6].
+    (I'd provide more stack traces for the other threads here, but
+    they're rather massive.)
+
+    Then, from #11 to #4 the entire execution happens within the
+    Python interpreter: This is just the callback being executed.
+    The segfault happens at #4 during _Py_dict_lookup(), which is a
+    private function inside the Python interpreter to look something
+    up in a `dict` [7]. As this function is so fundamental, it
+    shouldn't ever fail, ever; but yet it does, which suggests that
+    some internal interpreter state is most likely corrupted at that
+    point.
+
+Since it's incredibly hard to debug and actually figure out what the
+*real* underlying issue is, simply disable that on_progress callback
+instead. I just hope that this doesn't move the problem somewhere
+else.
+
+Unless I'm mistaken, there aren't any other callbacks that get passed
+through C/C++ via Cython [8] like this, so this should hopefully
+prevent any further SIGSEGVs until this is fixed upstream (somehow).
+
+Note that this bug was also reported upstream [9].
+
+[0]: https://bugzilla.proxmox.com/show_bug.cgi?id=6635
+[1]: https://forum.proxmox.com/threads/ceph-managers-seg-faulting-post-upgrade-8-9-upgrade.169363/post-796315
+[2]: https://docs.python.org/3.12/whatsnew/3.12.html#pep-684-a-per-interpreter-gil
+[3]: https://github.com/python/cpython/issues/117953
+[4]: https://tracker.ceph.com/issues/67696
+[5]: https://github.com/python/cpython/issues/138045
+[6]: https://github.com/ceph/ceph/blob/c92aebb279828e9c3c1f5d24613efca272649e62/src/pybind/rbd/rbd.pyx#L878-L907
+[7]: https://github.com/python/cpython/blob/282bd0fe98bf1c3432fd5a079ecf65f165a52587/Objects/dictobject.c#L1262-L1278
+[8]: https://cython.org/
+[9]: https://tracker.ceph.com/issues/72713
+
+Fixes: #6635
+Signed-off-by: Max R. Carrara <m.carrara@proxmox.com>
+---
+ src/pybind/rbd/rbd.pyx | 18 ++++++------------
+ 1 file changed, 6 insertions(+), 12 deletions(-)
+
+diff --git a/src/pybind/rbd/rbd.pyx b/src/pybind/rbd/rbd.pyx
+index f206e78ed1d..921c150803b 100644
+--- a/src/pybind/rbd/rbd.pyx
++++ b/src/pybind/rbd/rbd.pyx
+@@ -790,8 +790,7 @@ class RBD(object):
+             librbd_progress_fn_t _prog_cb = &no_op_progress_callback
+             void *_prog_arg = NULL
+         if on_progress:
+-            _prog_cb = &progress_callback
+-            _prog_arg = <void *>on_progress
++            pass
+         with nogil:
+             ret = rbd_remove_with_progress(_ioctx, _name, _prog_cb, _prog_arg)
+         if ret != 0:
+@@ -898,8 +897,7 @@ class RBD(object):
+             librbd_progress_fn_t _prog_cb = &no_op_progress_callback
+             void *_prog_arg = NULL
+         if on_progress:
+-            _prog_cb = &progress_callback
+-            _prog_arg = <void *>on_progress
++            pass
+         with nogil:
+             ret = rbd_trash_remove_with_progress(_ioctx, _image_id, _force,
+                                                  _prog_cb, _prog_arg)
+@@ -1137,8 +1135,7 @@ class RBD(object):
+             librbd_progress_fn_t _prog_cb = &no_op_progress_callback
+             void *_prog_arg = NULL
+         if on_progress:
+-            _prog_cb = &progress_callback
+-            _prog_arg = <void *>on_progress
++            pass
+         with nogil:
+             ret = rbd_migration_execute_with_progress(_ioctx, _image_name,
+                                                       _prog_cb, _prog_arg)
+@@ -1164,8 +1161,7 @@ class RBD(object):
+             librbd_progress_fn_t _prog_cb = &no_op_progress_callback
+             void *_prog_arg = NULL
+         if on_progress:
+-            _prog_cb = &progress_callback
+-            _prog_arg = <void *>on_progress
++            pass
+         with nogil:
+             ret = rbd_migration_commit_with_progress(_ioctx, _image_name,
+                                                      _prog_cb, _prog_arg)
+@@ -1191,8 +1187,7 @@ class RBD(object):
+             librbd_progress_fn_t _prog_cb = &no_op_progress_callback
+             void *_prog_arg = NULL
+         if on_progress:
+-            _prog_cb = &progress_callback
+-            _prog_arg = <void *>on_progress
++            pass
+         with nogil:
+             ret = rbd_migration_abort_with_progress(_ioctx, _image_name,
+                                                     _prog_cb, _prog_arg)
+@@ -4189,8 +4184,7 @@ written." % (self.name, ret, length))
+             librbd_progress_fn_t _prog_cb = &no_op_progress_callback
+             void *_prog_arg = NULL
+         if on_progress:
+-            _prog_cb = &progress_callback
+-            _prog_arg = <void *>on_progress
++            pass
+         with nogil:
+             ret = rbd_flatten_with_progress(self.image, _prog_cb, _prog_arg)
+         if ret < 0:

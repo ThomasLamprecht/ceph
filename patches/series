@@ -52,3 +52,4 @@
 0052-mgr-osd_perf_query-fix-ivalid-escape-sequence.patch
 0053-mgr-zabbix-fix-invalid-escape-sequences.patch
 0054-client-prohibit-unprivileged-users-from-setting-sgid.patch
+0055-pybind-rbd-disable-on_progress-callbacks-to-prevent-.patch
