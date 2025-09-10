@@ -11,10 +11,10 @@ The following REST APIs can be used for creating and managing an OpenID Connect 
 
 In order to invoke the REST admin APIs, a user with admin caps needs to be created.
 
-.. prompt:: bash #
+.. code-block:: javascript
 
-   radosgw-admin --uid TESTER --display-name "TestUser" --access_key TESTER --secret test123 user create
-   radosgw-admin caps add --uid="TESTER" --caps="oidc-provider=*"
+  radosgw-admin --uid TESTER --display-name "TestUser" --access_key TESTER --secret test123 user create
+  radosgw-admin caps add --uid="TESTER" --caps="oidc-provider=*"
 
 
 CreateOpenIDConnectProvider
@@ -42,11 +42,10 @@ Request Parameters
 
 
 Example::
-
   POST "<hostname>?Action=Action=CreateOpenIDConnectProvider
     &ThumbprintList.list.1=F7D7B3515DD0D319DD219A43A9EA727AD6065287
     &ClientIDList.list.1=app-profile-jsp
-    &Url=http://localhost:8080/auth/realms/quickstart
+    &Url=http://localhost:8080/auth/realms/quickstart"
 
 
 DeleteOpenIDConnectProvider
@@ -63,9 +62,8 @@ Request Parameters
 :Type: String
 
 Example::
-
   POST "<hostname>?Action=Action=DeleteOpenIDConnectProvider
-    &OpenIDConnectProviderArn=arn:aws:iam:::oidc-provider/localhost:8080/auth/realms/quickstart
+    &OpenIDConnectProviderArn=arn:aws:iam:::oidc-provider/localhost:8080/auth/realms/quickstart"
 
 
 GetOpenIDConnectProvider
@@ -82,9 +80,8 @@ Request Parameters
 :Type: String
 
 Example::
-
   POST "<hostname>?Action=Action=GetOpenIDConnectProvider
-    &OpenIDConnectProviderArn=arn:aws:iam:::oidc-provider/localhost:8080/auth/realms/quickstart
+    &OpenIDConnectProviderArn=arn:aws:iam:::oidc-provider/localhost:8080/auth/realms/quickstart"
 
 ListOpenIDConnectProviders
 --------------------------
@@ -97,7 +94,6 @@ Request Parameters
 None
 
 Example::
-
   POST "<hostname>?Action=Action=ListOpenIDConnectProviders
 
 AddClientIDToOpenIDConnectProvider
@@ -119,7 +115,6 @@ Request Parameters
 :Type: String
 
 Example::
-
   POST "<hostname>?Action=Action=AddClientIDToOpenIDConnectProvider
     &OpenIDConnectProviderArn=arn:aws:iam:::oidc-provider/localhost:8080/auth/realms/quickstart
     &ClientID=app-jee-jsp"
@@ -143,7 +138,6 @@ Request Parameters
 :Type: String
 
 Example::
-
   POST "<hostname>?Action=Action=RemoveClientIDFromOpenIDConnectProvider
     &OpenIDConnectProviderArn=arn:aws:iam:::oidc-provider/localhost:8080/auth/realms/quickstart
     &ClientID=app-jee-jsp"
@@ -168,7 +162,6 @@ Request Parameters
 :Type: Array of Strings
 
 Example::
-
   POST "<hostname>?Action=Action=UpdateOpenIDConnectProviderThumbprint
     &OpenIDConnectProviderArn=arn:aws:iam:::oidc-provider/localhost:8080/auth/realms/quickstart
     &&ThumbprintList.list.1=ABCDB3515DD0D319DD219A43A9EA727AD6061234"

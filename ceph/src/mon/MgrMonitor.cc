@@ -70,77 +70,32 @@ static ostream& _prefix(std::ostream *_dout, Monitor &mon,
 
 // the system treats always_on_modules as if they provide built-in functionality
 // by ensuring that they are always enabled.
-const static std::map<uint32_t, std::set<std::string>> always_on_modules = {
-  {
-    CEPH_RELEASE_OCTOPUS, {
-      "crash",
-      "status",
-      "progress",
-      "balancer",
-      "devicehealth",
-      "orchestrator",
-      "rbd_support",
-      "volumes",
-      "pg_autoscaler",
-      "telemetry",
-    }
-  },
-  {
-    CEPH_RELEASE_PACIFIC, {
-      "crash",
-      "status",
-      "progress",
-      "balancer",
-      "devicehealth",
-      "orchestrator",
-      "rbd_support",
-      "volumes",
-      "pg_autoscaler",
-      "telemetry",
-    }
-  },
-  {
-    CEPH_RELEASE_QUINCY, {
-      "crash",
-      "status",
-      "progress",
-      "balancer",
-      "devicehealth",
-      "orchestrator",
-      "rbd_support",
-      "volumes",
-      "pg_autoscaler",
-      "telemetry",
-    }
-  },
-  {
-    CEPH_RELEASE_REEF, {
-      "crash",
-      "status",
-      "progress",
-      "balancer",
-      "devicehealth",
-      "orchestrator",
-      "rbd_support",
-      "volumes",
-      "pg_autoscaler",
-      "telemetry",
-    }
-  },
-  {
-    CEPH_RELEASE_SQUID, {
-      "crash",
-      "status",
-      "progress",
-      "balancer",
-      "devicehealth",
-      "orchestrator",
-      "rbd_support",
-      "volumes",
-      "pg_autoscaler",
-      "telemetry",
-    }
-  },
+static const std::map<uint32_t, std::set<std::string>>& always_on_modules() {
+  static const std::set<std::string> octopus_modules = {
+    "crash",
+    "status",
+    "progress",
+    "balancer",
+    "devicehealth",
+    "orchestrator",
+#ifdef WITH_RBD
+    "rbd_support",
+#endif
+#ifdef WITH_CEPHFS
+    "volumes",
+#endif
+    "pg_autoscaler",
+    "telemetry",
+  };
+  static const std::map<uint32_t, std::set<std::string>> always_on_modules_map = {
+    { CEPH_RELEASE_OCTOPUS, octopus_modules },
+    { CEPH_RELEASE_PACIFIC, octopus_modules },
+    { CEPH_RELEASE_QUINCY, octopus_modules },
+    { CEPH_RELEASE_REEF, octopus_modules },
+    { CEPH_RELEASE_SQUID, octopus_modules },
+    { CEPH_RELEASE_TENTACLE, octopus_modules },
+  };
+  return always_on_modules_map;
 };
 
 // Prefix for mon store of active mgr's command descriptions
@@ -190,7 +145,7 @@ void MgrMonitor::create_initial()
   for (auto& m : tok) {
     pending_map.modules.insert(m);
   }
-  pending_map.always_on_modules = always_on_modules;
+  pending_map.always_on_modules = always_on_modules();
   pending_command_descs = mgr_commands;
   dout(10) << __func__ << " initial enabled modules: " << pending_map.modules
 	   << dendl;
@@ -263,7 +218,7 @@ void MgrMonitor::update_from_paxos(bool *need_bootstrap)
       string name = string("mgr/") + i.name + "/" + j.second.name;
       auto p = mgr_module_options.emplace(
 	name,
-	Option(name, static_cast<Option::type_t>(j.second.type),
+	Option(std::string{name}, static_cast<Option::type_t>(j.second.type),
 	       static_cast<Option::level_t>(j.second.level)));
       Option& opt = p.first->second;
       opt.set_flags(static_cast<Option::flag_t>(j.second.flags));
@@ -771,13 +726,13 @@ void MgrMonitor::on_active()
   }
   mon.clog->debug() << "mgrmap e" << map.epoch << ": " << map;
   assert(HAVE_FEATURE(mon.get_quorum_con_features(), SERVER_NAUTILUS));
-  if (pending_map.always_on_modules == always_on_modules) {
+  if (pending_map.always_on_modules == always_on_modules()) {
     return;
   }
   dout(4) << "always on modules changed, pending "
           << pending_map.always_on_modules << " != wanted "
-          << always_on_modules << dendl;
-  pending_map.always_on_modules = always_on_modules;
+          << always_on_modules() << dendl;
+  pending_map.always_on_modules = always_on_modules();
   propose_pending();
 }
 

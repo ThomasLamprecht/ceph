@@ -108,7 +108,6 @@ Here is an example of enabling the :term:`Dashboard` module:
 
 	{
 		"enabled_modules": [
-			"restful",
 			"status"
 		],
 		"disabled_modules": [
@@ -126,7 +125,6 @@ Here is an example of enabling the :term:`Dashboard` module:
 
 	{
 		"enabled_modules": [
-			"restful",
 			"status",
 			"dashboard"
 		],
@@ -141,8 +139,7 @@ Here is an example of enabling the :term:`Dashboard` module:
 .. code-block:: console
 
 	{
-		"dashboard": "http://myserver.com:7789/",
-		"restful": "https://myserver.com:8789/"
+		"dashboard": "http://myserver.com:7789/"
 	}
 
 

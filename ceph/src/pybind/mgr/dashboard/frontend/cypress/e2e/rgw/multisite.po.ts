@@ -7,8 +7,22 @@ const pages = {
     url: '#/rgw/multisite/sync-policy/(modal:create)',
     id: 'cd-rgw-multisite-sync-policy-form'
   },
-  edit: { url: '#/rgw/multisite/sync-policy/(modal:edit', id: 'cd-rgw-multisite-sync-policy-form' }
+  edit: { url: '#/rgw/multisite/sync-policy/(modal:edit', id: 'cd-rgw-multisite-sync-policy-form' },
+  topology: { url: '#/rgw/multisite/configuration', id: 'cd-rgw-multisite-details' },
+  wizard: {
+    url: '#/rgw/multisite/configuration/(modal:setup-multisite-replication)',
+    id: 'cd-rgw-multisite-wizard'
+  }
 };
+
+enum WizardSteps {
+  CreateRealmZonegroup = 'Create Realm & Zonegroup',
+  CreateZone = 'Create Zone',
+  Review = 'Review'
+}
+
+type Step = keyof typeof WizardSteps;
+
 export class MultisitePageHelper extends PageHelper {
   pages = pages;
 
@@ -44,7 +58,7 @@ export class MultisitePageHelper extends PageHelper {
     cy.contains('button', 'Edit Sync Policy Group').click();
 
     this.searchTable(group_id);
-    cy.get(`datatable-body-cell:nth-child(${this.columnIndex.status})`)
+    cy.get(`[cdstabledata]:nth-child(${this.columnIndex.status})`)
       .find('.badge-warning')
       .should('contain', status);
   }
@@ -69,10 +83,7 @@ export class MultisitePageHelper extends PageHelper {
 
     cy.get('button.tc_submitButton').click();
 
-    cy.get('cd-rgw-multisite-sync-policy-details .datatable-body-cell-label').should(
-      'contain',
-      flow_id
-    );
+    cy.get('cd-rgw-multisite-sync-policy-details .[cdstabledata]').should('contain', flow_id);
 
     cy.get('cd-rgw-multisite-sync-policy-details')
       .first()
@@ -94,7 +105,7 @@ export class MultisitePageHelper extends PageHelper {
     });
 
     cy.get('cd-rgw-multisite-sync-policy-details').within(() => {
-      cy.get('.datatable-body-cell-label').should('contain', flow_id);
+      cy.get('.[cdstabledata]').should('contain', flow_id);
       cy.get('[aria-label=search]').first().clear({ force: true }).type(flow_id);
       cy.get('input.cd-datatable-checkbox').first().check();
       cy.get('.table-actions button').first().click();
@@ -114,7 +125,7 @@ export class MultisitePageHelper extends PageHelper {
   }
 
   getTableCellWithContent(nestedClass: string, content: string) {
-    return cy.contains(`${nestedClass} .datatable-body-cell-label`, content);
+    return cy.contains(`${nestedClass} .[cdstabledata]`, content);
   }
 
   @PageHelper.restrictTo(pages.index.url)
@@ -123,7 +134,7 @@ export class MultisitePageHelper extends PageHelper {
     this.getTab('Flow').should('exist');
     this.getTab('Flow').click();
     cy.get('cd-rgw-multisite-sync-policy-details').within(() => {
-      cy.get('.datatable-body-cell-label').should('contain', flow_id);
+      cy.get('.[cdstabledata]').should('contain', flow_id);
       cy.get('[aria-label=search]').first().clear({ force: true }).type(flow_id);
     });
 
@@ -135,9 +146,9 @@ export class MultisitePageHelper extends PageHelper {
       cy.get(`button.delete`).first().click();
     });
 
-    cy.get('cd-modal .custom-control-label').click();
+    cy.get('cds-modal .custom-control-label').click();
     cy.get('[aria-label="Delete Flow"]').click();
-    cy.get('cd-modal').should('not.exist');
+    cy.get('cds-modal').should('not.exist');
 
     cy.get('cd-rgw-multisite-sync-policy-details')
       .first()
@@ -188,7 +199,7 @@ export class MultisitePageHelper extends PageHelper {
       .type(dest_zones[0]);
     cy.get('cd-rgw-multisite-sync-policy-details cd-table')
       .eq(1)
-      .find('.datatable-body-cell-label')
+      .find('.[cdstabledata]')
       .should('contain', dest_zones[0]);
   }
 
@@ -220,10 +231,7 @@ export class MultisitePageHelper extends PageHelper {
     }
     cy.get('button.tc_submitButton').click();
 
-    cy.get('cd-rgw-multisite-sync-policy-details .datatable-body-cell-label').should(
-      'contain',
-      pipe_id
-    );
+    cy.get('cd-rgw-multisite-sync-policy-details .[cdstabledata]').should('contain', pipe_id);
 
     cy.get('cd-rgw-multisite-sync-policy-details')
       .first()
@@ -245,7 +253,7 @@ export class MultisitePageHelper extends PageHelper {
     });
 
     cy.get('cd-rgw-multisite-sync-policy-details').within(() => {
-      cy.get('.datatable-body-cell-label').should('contain', pipe_id);
+      cy.get('.[cdstabledata]').should('contain', pipe_id);
       cy.get('[aria-label=search]').first().clear({ force: true }).type(pipe_id);
       cy.get('input.cd-datatable-checkbox').first().check();
       cy.get('.table-actions button').first().click();
@@ -271,7 +279,7 @@ export class MultisitePageHelper extends PageHelper {
     this.getTab('Pipe').should('exist');
     this.getTab('Pipe').click();
     cy.get('cd-rgw-multisite-sync-policy-details').within(() => {
-      cy.get('.datatable-body-cell-label').should('contain', pipe_id);
+      cy.get('.[cdstabledata]').should('contain', pipe_id);
       cy.get('[aria-label=search]').first().clear({ force: true }).type(pipe_id);
     });
 
@@ -294,5 +302,52 @@ export class MultisitePageHelper extends PageHelper {
       });
     // Waits for item to be removed from table
     getRow(pipe_id).should('not.exist');
+  }
+
+  @PageHelper.restrictTo(pages.topology.url)
+  topologyViewerExist() {
+    cy.get(pages.topology.id).should('be.visible');
+    cy.get('[data-testid=rgw-multisite-details-header]').should('have.text', 'Topology Viewer');
+  }
+
+  @PageHelper.restrictTo(pages.wizard.url)
+  replicationWizardExist() {
+    cy.get('cds-modal').then(() => {
+      cy.get('[data-testid=rgw-multisite-wizard-header]').should(
+        'have.text',
+        'Set up Multi-site Replication'
+      );
+    });
+  }
+
+  @PageHelper.restrictTo(pages.index.url)
+  verifyWizardContents(step: Step) {
+    cy.get('cds-modal').then(() => {
+      this.gotoStep(step);
+      if (step === 'CreateRealmZonegroup') {
+        this.typeValueToField('realmName', 'test-realm');
+        this.typeValueToField('zonegroupName', 'test-zg');
+      } else if (step === 'CreateZone') {
+        this.typeValueToField('zoneName', 'test-zone');
+      } else {
+        this.gotoStep('Review');
+        cy.get('.form-group.row').then(() => {
+          cy.get('#realmName').invoke('text').should('eq', 'test-realm');
+          cy.get('#zonegroupName').invoke('text').should('eq', 'test-zg');
+          cy.get('#zoneName').invoke('text').should('eq', 'test-zone');
+        });
+      }
+    });
+  }
+
+  typeValueToField(fieldID: string, value: string) {
+    cy.get(`#${fieldID}`).clear().type(value).should('have.value', value);
+  }
+
+  gotoStep(step: Step) {
+    cy.get('cd-wizard').then(() => {
+      cy.get('form').should('be.visible');
+      cy.get('button').contains(WizardSteps[step]).click();
+    });
   }
 }

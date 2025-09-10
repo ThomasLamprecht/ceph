@@ -25,6 +25,7 @@
 #include <boost/intrusive/list.hpp>
 
 #include <seastar/core/future.hh>
+#include <seastar/util/assert.hh>
 #include <seastar/util/std-compat.hh>
 #include <seastar/util/modules.hh>
 #include <cassert>
@@ -34,8 +35,7 @@
 #endif
 
 #ifdef SEASTAR_DEBUG
-// See: https://tracker.ceph.com/issues/64332
-// #define SEASTAR_GATE_HOLDER_DEBUG
+#define SEASTAR_GATE_HOLDER_DEBUG
 #endif
 
 namespace seastar {
@@ -81,7 +81,7 @@ public:
     }
     gate& operator=(gate&& x) noexcept {
         if (this != &x) {
-            assert(!_count && "gate reassigned with outstanding requests");
+            SEASTAR_ASSERT(!_count && "gate reassigned with outstanding requests");
             x.assert_not_held_when_moved();
             _count = std::exchange(x._count, 0);
             _stopped = std::exchange(x._stopped, std::nullopt);
@@ -89,7 +89,7 @@ public:
         return *this;
     }
     ~gate() {
-        assert(!_count && "gate destroyed with outstanding requests");
+        SEASTAR_ASSERT(!_count && "gate destroyed with outstanding requests");
         assert_not_held_when_destroyed();
     }
     /// Tries to register an in-progress request.
@@ -131,7 +131,7 @@ public:
     /// voluntarily stop itself after the gate is closed, by making calls to
     /// check() in appropriate places. check() with throw an exception and
     /// bail out of the long-running code if the gate is closed.
-    void check() {
+    void check() const {
         if (_stopped) {
             throw gate_closed_exception();
         }
@@ -142,7 +142,7 @@ public:
     /// all current requests call \ref leave(), the returned future will be
     /// made ready.
     future<> close() noexcept {
-        assert(!_stopped && "seastar::gate::close() cannot be called more than once");
+        SEASTAR_ASSERT(!_stopped && "seastar::gate::close() cannot be called more than once");
         _stopped = std::make_optional(promise<>());
         if (!_count) {
             _stopped->set_value();
@@ -281,6 +281,13 @@ public:
         return holder(*this);
     }
 
+    /// Try getting an optional RAII-based gate::holder object that \ref enter "enter()s"
+    /// the gate when constructed and \ref leave "leave()s" it when destroyed.
+    /// Returns std::nullopt iff the gate is closed.
+    std::optional<holder> try_hold() noexcept {
+        return is_closed() ? std::nullopt : std::make_optional<holder>(*this);
+    }
+
 private:
 #ifdef SEASTAR_GATE_HOLDER_DEBUG
     using holders_list_t = boost::intrusive::list<holder,
@@ -294,10 +301,10 @@ private:
 #ifdef SEASTAR_GATE_HOLDER_DEBUG
 SEASTAR_MODULE_EXPORT
 inline void gate::assert_not_held_when_moved() const noexcept {
-    assert(_holders.empty() && "gate moved with outstanding holders");
+    SEASTAR_ASSERT(_holders.empty() && "gate moved with outstanding holders");
 }
 inline void gate::assert_not_held_when_destroyed() const noexcept {
-    assert(_holders.empty() && "gate destroyed with outstanding holders");
+    SEASTAR_ASSERT(_holders.empty() && "gate destroyed with outstanding holders");
 }
 #endif  // SEASTAR_GATE_HOLDER_DEBUG
 

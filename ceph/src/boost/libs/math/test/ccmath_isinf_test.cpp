@@ -5,6 +5,7 @@
 
 #include <cmath>
 #include <cfloat>
+#include <cstdint>
 #include <limits>
 #include <boost/math/ccmath/isinf.hpp>
 #include <boost/core/lightweight_test.hpp>
@@ -49,7 +50,7 @@ int main()
     test<long double>();
     #endif
     
-    #if defined(BOOST_HAS_FLOAT128) && !defined(BOOST_MATH_USING_BUILTIN_CONSTANT_P)
+    #if defined(BOOST_MATH_TEST_FLOAT128) && !defined(BOOST_MATH_USING_BUILTIN_CONSTANT_P) && defined(BOOST_MATH_TEST_FLOAT128)
     test<boost::multiprecision::float128>();
     #endif
 

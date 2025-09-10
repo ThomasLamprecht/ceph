@@ -761,7 +761,6 @@ int commit_period(const DoutPrefixProvider* dpp, optional_yield y,
     }
     ldpp_dout(dpp, 4) << "Promoted to master zone and committed new period "
         << info.id << dendl;
-    (void) cfgstore->realm_notify_new_period(dpp, y, info);
     return 0;
   }
   // period must be based on current epoch
@@ -780,10 +779,6 @@ int commit_period(const DoutPrefixProvider* dpp, optional_yield y,
   // write the period
   constexpr bool exclusive = true;
   int r = cfgstore->create_period(dpp, y, exclusive, info);
-  if (r == -EEXIST) {
-    // already have this epoch (or a more recent one)
-    return 0;
-  }
   if (r < 0) {
     ldpp_dout(dpp, 0) << "failed to store period: " << cpp_strerror(r) << dendl;
     return r;
@@ -795,7 +790,6 @@ int commit_period(const DoutPrefixProvider* dpp, optional_yield y,
   }
   ldpp_dout(dpp, 4) << "Committed new epoch " << info.epoch
       << " for period " << info.id << dendl;
-  (void) cfgstore->realm_notify_new_period(dpp, y, info);
   return 0;
 }
 
@@ -1361,11 +1355,32 @@ int RGWZoneGroupPlacementTier::update_params(const JSONFormattable& config)
       retain_head_object = false;
     }
   }
+  if (config.exists("allow_read_through")) {
+    string s = config["allow_read_through"];
+    if (s == "true") {
+      allow_read_through = true;
+    } else {
+      allow_read_through = false;
+    }
+  }
+  if (config.exists("read_through_restore_days")) {
+    r = conf_to_uint64(config, "read_through_restore_days", &read_through_restore_days);
+    if (r < 0) {
+      read_through_restore_days = DEFAULT_READ_THROUGH_RESTORE_DAYS;
+    }
+  }
 
-  if (tier_type == "cloud-s3") {
+  if (is_tier_type_s3()) {
     r = t.s3.update_params(config);
   }
 
+  if (config.exists("restore_storage_class")) {
+    restore_storage_class = config["restore_storage_class"];
+  }
+
+  if (is_tier_type_s3_glacier()) {
+    r = s3_glacier.update_params(config);
+  }
   return r;
 }
 
@@ -1374,9 +1389,23 @@ int RGWZoneGroupPlacementTier::clear_params(const JSONFormattable& config)
   if (config.exists("retain_head_object")) {
     retain_head_object = false;
   }
+  if (config.exists("allow_read_through")) {
+    allow_read_through = false;
+  }
+  if (config.exists("read_through_restore_days")) {
+    read_through_restore_days = DEFAULT_READ_THROUGH_RESTORE_DAYS;
+  }
 
-  if (tier_type == "cloud-s3") {
+  if (is_tier_type_s3()) {
     t.s3.clear_params(config);
+  }
+
+  if (config.exists("restore_storage_class")) {
+    restore_storage_class = RGW_STORAGE_CLASS_STANDARD;
+  }
+
+  if (is_tier_type_s3_glacier()) {
+    s3_glacier.clear_params(config);
   }
 
   return 0;
@@ -1491,6 +1520,40 @@ int RGWZoneGroupPlacementTierS3::clear_params(const JSONFormattable& config)
       m.init(cc);
       acl_mappings.erase(m.source_id);
     }
+  }
+  return 0;
+}
+
+int RGWZoneGroupTierS3Glacier::update_params(const JSONFormattable& config)
+{
+  int r = -1;
+
+  if (config.exists("glacier_restore_days")) {
+    r = conf_to_uint64(config, "glacier_restore_days", &glacier_restore_days);
+    if (r < 0) {
+      glacier_restore_days = DEFAULT_GLACIER_RESTORE_DAYS;
+    }
+  }
+  if (config.exists("glacier_restore_tier_type")) {
+    string s;
+    s = config["glacier_restore_tier_type"];
+    if (s != "Expedited") {
+      glacier_restore_tier_type = Standard;
+    } else {
+      glacier_restore_tier_type = Expedited;
+    }
+  }
+  return 0;
+}
+
+int RGWZoneGroupTierS3Glacier::clear_params(const JSONFormattable& config)
+{
+  if (config.exists("glacier_restore_days")) {
+    glacier_restore_days = DEFAULT_GLACIER_RESTORE_DAYS;
+  }
+  if (config.exists("glacier_restore_tier_type")) {
+    /* default */
+    glacier_restore_tier_type = Standard;
   }
   return 0;
 }

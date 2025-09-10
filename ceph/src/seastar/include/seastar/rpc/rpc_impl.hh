@@ -20,16 +20,17 @@
  */
 #pragma once
 
+#include <seastar/core/format.hh>
 #include <seastar/core/function_traits.hh>
 #include <seastar/core/shared_ptr.hh>
 #include <seastar/core/sstring.hh>
 #include <seastar/core/when_all.hh>
+#include <seastar/util/assert.hh>
 #include <seastar/util/is_smart_ptr.hh>
 #include <seastar/core/simple-stream.hh>
-#include <boost/range/numeric.hpp>
-#include <boost/range/adaptor/transformed.hpp>
 #include <seastar/net/packet-data-source.hh>
-#include <seastar/core/print.hh>
+
+#include <boost/type.hpp> // for compatibility
 
 namespace seastar {
 
@@ -280,17 +281,39 @@ inline snd_buf marshall(Serializer& serializer, size_t head_space, const T&... a
 template <typename Serializer, typename Input, typename... T>
 std::tuple<T...> do_unmarshall(connection& c, Input& in);
 
+// The protocol to call the serializer is read(serializer, stream, rpc::type<T>).
+// However, some users (ahem) used boost::type instead of rpc::type when the two
+// types were aliased, preventing us from moving to the newer std::type_identity.
+// To preserve compatibility, calls to read() are routed through
+// read_via_type_marker(), of which there are two variants, one for
+// boost::type (marked as deprecated) and one for std::type_identity.
+
+template <typename T, typename... Args>
+requires requires (Args... args, type<T> t) { read(std::forward<Args>(args)..., t); }
+auto
+read_via_type_marker(Args&&... args) {
+    return read(std::forward<Args>(args)..., type<T>());
+}
+
+template <typename T, typename... Args>
+requires requires (Args... args, boost::type<T> t) { read(std::forward<Args>(args)..., t); }
+[[deprecated("Use rpc::type<> instead of boost::type<>")]]
+auto
+read_via_type_marker(Args&&... args) {
+    return read(std::forward<Args>(args)..., boost::type<T>());
+}
+
 template<typename Serializer, typename Input>
 struct unmarshal_one {
     template<typename T> struct helper {
         static T doit(connection& c, Input& in) {
-            return read(c.serializer<Serializer>(), in, type<T>());
+            return read_via_type_marker<T>(c.serializer<Serializer>(), in);
         }
     };
     template<typename T> struct helper<optional<T>> {
         static optional<T> doit(connection& c, Input& in) {
             if (in.size()) {
-                return optional<T>(read(c.serializer<Serializer>(), in, type<typename remove_optional<T>::type>()));
+                return optional<T>(read_via_type_marker<typename remove_optional<T>::type>(c.serializer<Serializer>(), in));
             } else {
                 return optional<T>();
             }
@@ -323,18 +346,86 @@ struct unmarshal_one {
     };
 };
 
+template <typename... T>
+struct default_constructible_tuple_except_first;
+
+template <>
+struct default_constructible_tuple_except_first<> {
+    using type = std::tuple<>;
+};
+
+template <typename T0, typename... T>
+struct default_constructible_tuple_except_first<T0, T...> {
+    using type = std::tuple<
+            T0,
+            std::conditional_t<
+                    std::is_default_constructible_v<T>,
+                    T,
+                    std::optional<T>
+            >...
+        >;
+};
+
+template <typename... T>
+using default_constructible_tuple_except_first_t = typename default_constructible_tuple_except_first<T...>::type;
+
+// Where Tin != Tout, apply std:optional::value()
+template <typename... Tout, typename... Tin>
+auto
+unwrap_optional_if_needed(std::tuple<Tin...>&& tuple_in) {
+    using tuple_in_t = std::tuple<Tin...>;
+    using tuple_out_t = std::tuple<Tout...>;
+    return std::invoke([&] <size_t... Idx> (std::index_sequence<Idx...>) {
+        return tuple_out_t(
+            std::invoke([&] () {
+                if constexpr (std::same_as<std::tuple_element_t<Idx, tuple_in_t>, std::tuple_element_t<Idx, tuple_out_t>>) {
+                    return std::move(std::get<Idx>(tuple_in));
+                } else {
+                    return std::move(std::get<Idx>(tuple_in).value());
+                }
+            })...);
+    }, std::make_index_sequence<sizeof...(Tout)>());
+}
+
 template <typename Serializer, typename Input, typename... T>
 inline std::tuple<T...> do_unmarshall(connection& c, Input& in) {
     // Argument order processing is unspecified, but we need to deserialize
     // left-to-right. So we deserialize into something that can be lazily
     // constructed (and can conditionally destroy itself if we only constructed some
     // of the arguments).
-    std::tuple<std::optional<T>...> temporary;
-    return std::apply([&] (auto&... args) {
-        // Comma-expression preserves left-to-right order
-        (..., (args = unmarshal_one<Serializer, Input>::template helper<typename std::remove_reference_t<decltype(args)>::value_type>::doit(c, in)));
-        return std::tuple(std::move(*args)...);
-    }, temporary);
+    //
+    // The first element of the tuple has no ordering
+    // problem, and we can deserialize directly into a std::tuple<T...>.
+    //
+    // For the rest of the elements, if they are default-constructible, we leave
+    // them as is, and if not, we deserialize into std::optional<T>, and later
+    // unwrap them. If we're lucky and nothing was wrapped, we can return without
+    // any data movement.
+    using ret_type = std::tuple<T...>;
+    using temporary_type = default_constructible_tuple_except_first_t<T...>;
+    return std::invoke([&] <size_t... Idx> (std::index_sequence<Idx...>) {
+        auto tmp = temporary_type(
+            std::invoke([&] () -> std::tuple_element_t<Idx, temporary_type> {
+                if constexpr (Idx == 0) {
+                    // The first T has no ordering problem, so we can deserialize it directly into the tuple
+                    return unmarshal_one<Serializer, Input>::template helper<std::tuple_element_t<Idx, ret_type>>::doit(c, in);
+                } else {
+                    // Use default constructor for the rest of the Ts
+                    return {};
+                }
+            })...
+        );
+        // Deserialize the other Ts, comma-expression preserves left-to-right order.
+        (void)(...,  ((Idx == 0
+            ? 0
+            : ((std::get<Idx>(tmp) = unmarshal_one<Serializer, Input>::template helper<std::tuple_element_t<Idx, ret_type>>::doit(c, in), 0)))));
+        if constexpr (std::same_as<ret_type, temporary_type>) {
+            // Use Named Return Vale Optimization (NVRO) if we didn't have to wrap anything
+            return tmp;
+        } else {
+            return unwrap_optional_if_needed<T...>(std::move(tmp));
+        }
+    }, std::index_sequence_for<T...>());
 }
 
 template <typename Serializer, typename... T>
@@ -820,7 +911,7 @@ template<typename Serializer, typename... Out>
 sink_impl<Serializer, Out...>::~sink_impl() {
     // A failure to close might leave some continuations running after
     // this is destroyed, leading to use-after-free bugs.
-    assert(this->_con->get()->sink_closed());
+    SEASTAR_ASSERT(this->_con->get()->sink_closed());
 }
 
 template<typename Serializer, typename... In>

@@ -40,6 +40,7 @@
 #include <seastar/util/noncopyable_function.hh>
 #include <seastar/util/modules.hh>
 #include <seastar/util/string_utils.hh>
+#include <seastar/util/iostream.hh>
 
 namespace seastar {
 
@@ -77,13 +78,13 @@ struct reply {
         see_other = 303, //!< see_other
         not_modified = 304, //!< not_modified
         use_proxy = 305, //!< use_proxy
-        temporary_redirect = 307, //!< temporary_redirect 
+        temporary_redirect = 307, //!< temporary_redirect
         bad_request = 400, //!< bad_request
         unauthorized = 401, //!< unauthorized
         payment_required = 402, //!< payment_required
         forbidden = 403, //!< forbidden
         not_found = 404, //!< not_found
-        method_not_allowed = 405, //!< method_not_allowed 
+        method_not_allowed = 405, //!< method_not_allowed
         not_acceptable = 406, //!< not_acceptable
         request_timeout = 408, //!< request_timeout
         conflict = 409, //!< conflict
@@ -93,17 +94,54 @@ struct reply {
         uri_too_long = 414, //!< uri_too_long
         unsupported_media_type = 415, //!< unsupported_media_type
         expectation_failed = 417, //!< expectation_failed
+        page_expired = 419, //!< page_expired
         unprocessable_entity = 422, //!< unprocessable_entity
         upgrade_required = 426, //!< upgrade_required
         too_many_requests = 429, //!< too_many_requests
+        login_timeout = 440, //!< login_timeout
         internal_server_error = 500, //!< internal_server_error
         not_implemented = 501, //!< not_implemented
         bad_gateway = 502, //!< bad_gateway
         service_unavailable = 503,  //!< service_unavailable
         gateway_timeout = 504, //!< gateway_timeout
-        http_version_not_supported = 505, //!< http_version_not_supported 
-        insufficient_storage = 507 //!< insufficient_storage
+        http_version_not_supported = 505, //!< http_version_not_supported
+        insufficient_storage = 507, //!< insufficient_storage
+        bandwidth_limit_exceeded = 509, //!< bandwidth_limit_exceeded
+        network_read_timeout = 598, //!< network_read_timeout
+        network_connect_timeout = 599, //!< network_connect_timeout
     } _status;
+
+    /**
+     * HTTP status classes
+     * See https://www.iana.org/assignments/http-status-codes/http-status-codes.xhtml
+     *
+     * 1xx: Informational - Request received, continuing process
+     * 2xx: Success - The action was successfully received, understood, and accepted
+     * 3xx: Redirection - Further action must be taken in order to complete the request
+     * 4xx: Client Error - The request contains bad syntax or cannot be fulfilled
+     * 5xx: Server Error - The server failed to fulfill an apparently valid request
+     */
+    enum class status_class : uint8_t {
+        informational = 1,
+        success = 2,
+        redirection = 3,
+        client_error = 4,
+        server_error = 5,
+        unclassified
+    };
+
+    /**
+     * Classify http status
+     * @param http_status the http status \ref status_type
+     * @return one of the \ref status_class values
+     */
+    static constexpr status_class classify_status(status_type http_status) {
+        auto sc = static_cast<std::underlying_type_t<status_type>>(http_status) / 100;
+        if (sc < 1 || sc > 5) [[unlikely]] {
+            return status_class::unclassified;
+        }
+        return static_cast<status_class>(sc);
+    }
 
     /**
      * The headers to be included in the reply.
@@ -186,7 +224,7 @@ struct reply {
         _response_line = response_line();
         return *this;
     }
-    sstring response_line();
+    sstring response_line() const;
 
     /*!
      * \brief use an output stream to write the message body
@@ -205,6 +243,20 @@ struct reply {
      */
 
     void write_body(const sstring& content_type, noncopyable_function<future<>(output_stream<char>&&)>&& body_writer);
+
+    /*!
+     * \brief use and output stream to write the message body
+     *
+     * The same as above, but the handler can only .write() data into the stream, it will be
+     * closed (and flushed) automatically after the writer fn resolves
+     */
+    template <typename W>
+    requires std::is_invocable_r_v<future<>, W, output_stream<char>&>
+    void write_body(const sstring& content_type, W&& body_writer) {
+        write_body(content_type, [body_writer = std::move(body_writer)] (output_stream<char>&& out) mutable -> future<> {
+            return util::write_to_stream_and_close(std::move(out), std::move(body_writer));
+        });
+    }
 
     /*!
      * \brief Write a string as the reply

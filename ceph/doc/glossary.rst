@@ -226,7 +226,7 @@
         Crimson
                 A next-generation OSD architecture whose aim is the
                 reduction of latency costs incurred due to cross-core
-                communications. A re-design of the OSD that reduces lock
+                communications. A re-design of the OSD reduces lock
                 contention by reducing communication between shards in the data
                 path. Crimson improves upon the performance of classic Ceph
                 OSDs by eliminating reliance on thread pools. See `Crimson:

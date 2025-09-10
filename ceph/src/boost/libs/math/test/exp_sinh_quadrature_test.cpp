@@ -29,6 +29,10 @@
 #include <boost/multiprecision/complex128.hpp>
 #endif
 
+#if __has_include(<stdfloat>)
+#  include <stdfloat>
+#endif
+
 using std::exp;
 using std::cos;
 using std::tan;
@@ -569,6 +573,37 @@ void test_complex_exponential_integral_E1(){
     }
 }
 
+template <class T>
+void test_non_central_t()
+{
+   //
+   // Bug case from the non-central t distribution:
+   //
+   using std::pow;
+   using std::exp;
+   using std::sqrt;
+
+   std::cout << "Testing non-central T PDF integral" << std::endl;
+
+   T x = -1.882352352142334;
+   T v = 77.384613037109375;
+   T mu = 8.1538467407226562;
+   T expected = static_cast<T>(4.5098555913703146875364186893655197e+49L);
+
+   boost::math::quadrature::exp_sinh<T> integrator;
+   T err;
+   T L1;
+   std::size_t levels;
+   T integral = integrator.integrate([&x, v, mu](T y)
+      {
+         return pow(y, v) * exp(boost::math::pow<2>((y - mu * x / sqrt(x * x + v))) / -2);
+      },
+      boost::math::tools::root_epsilon<T>(), &err, &L1, &levels);
+
+   T tol = 100 * boost::math::tools::epsilon<T>();
+   BOOST_CHECK_CLOSE_FRACTION(integral, expected, tol);
+}
+
 
 BOOST_AUTO_TEST_CASE(exp_sinh_quadrature_test)
 {
@@ -586,16 +621,38 @@ BOOST_AUTO_TEST_CASE(exp_sinh_quadrature_test)
    */
 
 #ifdef TEST1
+
+#ifdef __STDCPP_FLOAT32_T__
+    test_left_limit_infinite<std::float32_t>();
+    test_right_limit_infinite<std::float32_t>();
+    test_nr_examples<std::float32_t>();
+    test_crc<std::float32_t>();
+    //test_non_central_t<float32_t>();
+#else
     test_left_limit_infinite<float>();
     test_right_limit_infinite<float>();
     test_nr_examples<float>();
     test_crc<float>();
+    //test_non_central_t<float>();
+#endif
+
 #endif
 #ifdef TEST2
+
+#ifdef __STDCPP_FLOAT64_T__
+    test_left_limit_infinite<std::float64_t>();
+    test_right_limit_infinite<std::float64_t>();
+    test_nr_examples<std::float64_t>();
+    test_crc<std::float64_t>();
+    test_non_central_t<std::float64_t>();
+#else
     test_left_limit_infinite<double>();
     test_right_limit_infinite<double>();
     test_nr_examples<double>();
     test_crc<double>();
+    test_non_central_t<double>();
+#endif
+
 #endif
 #ifndef BOOST_MATH_NO_LONG_DOUBLE_MATH_FUNCTIONS
 #ifdef TEST3
@@ -604,10 +661,11 @@ BOOST_AUTO_TEST_CASE(exp_sinh_quadrature_test)
     test_right_limit_infinite<long double>();
     test_nr_examples<long double>();
     test_crc<long double>();
+    test_non_central_t<long double>();
 #endif
 #endif
 #endif
-#if defined(TEST4) && !defined(BOOST_MATH_NO_MP_TESTS)
+#if defined(TEST4) && defined(BOOST_MATH_RUN_MP_TESTS)
     test_left_limit_infinite<cpp_bin_float_quad>();
     test_right_limit_infinite<cpp_bin_float_quad>();
     test_nr_examples<cpp_bin_float_quad>();
@@ -620,15 +678,16 @@ BOOST_AUTO_TEST_CASE(exp_sinh_quadrature_test)
     test_right_limit_infinite<boost::math::concepts::real_concept>();
     test_nr_examples<boost::math::concepts::real_concept>();
     test_crc<boost::math::concepts::real_concept>();
+    test_non_central_t<boost::math::concepts::real_concept>();
 #endif
 #endif
-#if defined(TEST6) && !defined(BOOST_MATH_NO_MP_TESTS)
+#if defined(TEST6) && defined(BOOST_MATH_RUN_MP_TESTS)
     test_left_limit_infinite<boost::multiprecision::cpp_bin_float_50>();
     test_right_limit_infinite<boost::multiprecision::cpp_bin_float_50>();
     test_nr_examples<boost::multiprecision::cpp_bin_float_50>();
     test_crc<boost::multiprecision::cpp_bin_float_50>();
 #endif
-#if defined(TEST7) && !defined(BOOST_MATH_NO_MP_TESTS)
+#if defined(TEST7) && defined(BOOST_MATH_RUN_MP_TESTS)
     test_left_limit_infinite<boost::multiprecision::cpp_dec_float_50>();
     test_right_limit_infinite<boost::multiprecision::cpp_dec_float_50>();
     test_nr_examples<boost::multiprecision::cpp_dec_float_50>();
@@ -636,7 +695,7 @@ BOOST_AUTO_TEST_CASE(exp_sinh_quadrature_test)
     // This one causes stack overflows on the CI machine, but not locally,
     // assume it's due to restricted resources on the server, and <shrug> for now...
     //
-#if ! BOOST_WORKAROUND(BOOST_MSVC, == 1900) && !defined(BOOST_MATH_NO_MP_TESTS)
+#if ! BOOST_WORKAROUND(BOOST_MSVC, == 1900) && defined(BOOST_MATH_RUN_MP_TESTS)
     test_crc<boost::multiprecision::cpp_dec_float_50>();
 #endif
 #endif
@@ -656,7 +715,7 @@ BOOST_AUTO_TEST_CASE(exp_sinh_quadrature_test)
 #ifndef BOOST_MATH_NO_LONG_DOUBLE_MATH_FUNCTIONS
     test_complex_exponential_integral_E1<std::complex<long double>>();
 #endif
-#ifndef BOOST_MATH_NO_MP_TESTS
+#if defined(BOOST_MATH_RUN_MP_TESTS)
     test_complex_exponential_integral_E1<boost::multiprecision::cpp_complex_quad>();
 #endif
 #endif

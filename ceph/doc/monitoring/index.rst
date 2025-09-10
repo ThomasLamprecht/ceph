@@ -99,6 +99,7 @@ To identify any Ceph daemons that were not responsive at any point in the last
 
    ceph_daemon_socket_up == 0 or min_over_time(ceph_daemon_socket_up[12h]) == 0
 
+
 Performance metrics
 ===================
 

@@ -37,8 +37,11 @@ import { TruncatePipe } from './truncate.pipe';
 import { UpperFirstPipe } from './upper-first.pipe';
 import { OctalToHumanReadablePipe } from './octal-to-human-readable.pipe';
 import { PathPipe } from './path.pipe';
+import { PluralizePipe } from './pluralize.pipe';
 import { XmlPipe } from './xml.pipe';
 import { MbpersecondPipe } from './mbpersecond.pipe';
+import { PipeFunctionPipe } from './pipe-function.pipe';
+import { DimlessBinaryPerMinutePipe } from './dimless-binary-per-minute.pipe';
 
 @NgModule({
   imports: [CommonModule],
@@ -79,8 +82,11 @@ import { MbpersecondPipe } from './mbpersecond.pipe';
     OsdSummaryPipe,
     OctalToHumanReadablePipe,
     PathPipe,
+    PluralizePipe,
     XmlPipe,
-    MbpersecondPipe
+    MbpersecondPipe,
+    PipeFunctionPipe,
+    DimlessBinaryPerMinutePipe
   ],
   exports: [
     ArrayPipe,
@@ -119,8 +125,11 @@ import { MbpersecondPipe } from './mbpersecond.pipe';
     OsdSummaryPipe,
     OctalToHumanReadablePipe,
     PathPipe,
+    PluralizePipe,
     XmlPipe,
-    MbpersecondPipe
+    MbpersecondPipe,
+    PipeFunctionPipe,
+    DimlessBinaryPerMinutePipe
   ],
   providers: [
     ArrayPipe,
@@ -153,7 +162,8 @@ import { MbpersecondPipe } from './mbpersecond.pipe';
     MdsSummaryPipe,
     OsdSummaryPipe,
     OctalToHumanReadablePipe,
-    MbpersecondPipe
+    MbpersecondPipe,
+    DimlessBinaryPerMinutePipe
   ]
 })
 export class PipesModule {}

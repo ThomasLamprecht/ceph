@@ -14,17 +14,16 @@
 #ifndef MDS_AUTH_CAPS_H
 #define MDS_AUTH_CAPS_H
 
-#include <ostream>
+#include <cstdint>
+#include <iosfwd>
 #include <string>
 #include <string_view>
 #include <vector>
 
 #include "include/encoding.h"
-#include "include/common_fwd.h"
-#include "include/types.h"
-#include "common/debug.h"
+#include "msg/msg_types.h" // for struct entity_addr_t
 
-#include "mdstypes.h"
+#include <boost/optional.hpp>
 
 // unix-style capabilities
 enum {
@@ -118,8 +117,8 @@ struct MDSCapMatch {
   MDSCapMatch(const std::string& fsname_, const std::string& path_,
 	      bool root_squash_, int64_t uid_=MDS_AUTH_UID_ANY,
 	      const std::vector<gid_t>& gids_={}) {
-    fs_name = std::move(fsname_);
-    path = std::move(path_);
+    fs_name = fsname_;
+    path = path_;
     root_squash = root_squash_;
     uid = (uid_ == 0) ? -1 : uid_;
     gids = gids_;

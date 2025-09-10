@@ -8,6 +8,7 @@
 #include <vector>
 #include <string>
 #include <array>
+#include <iomanip>
 #include <string_view>
 #include <sstream>
 #include <memory>
@@ -42,6 +43,7 @@
 
 #include "rgw_sts.h"
 #include "rgw_rest_oidc_provider.h"
+#include "rgw_asio_thread.h"
 
 
 #define dout_context g_ceph_context
@@ -313,7 +315,7 @@ WebTokenEngine::get_cert_url(const string& iss, const DoutPrefixProvider *dpp, o
   //Headers
   openidc_req.append_header("Content-Type", "application/x-www-form-urlencoded");
 
-  int res = openidc_req.process(y);
+  int res = openidc_req.process(dpp, y);
   if (res < 0) {
     ldpp_dout(dpp, 10) << "HTTP request res: " << res << dendl;
     throw -EINVAL;
@@ -446,6 +448,8 @@ WebTokenEngine::shutdown_ssl(const DoutPrefixProvider* dpp, SSL* ssl, SSL_CTX* c
 std::string
 WebTokenEngine::connect_to_host_get_cert_chain(const DoutPrefixProvider* dpp, const std::string& hostname, int port) const
 {
+  maybe_warn_about_blocking(dpp);
+
   // Create SSL context
   SSL_CTX* ctx = SSL_CTX_new(TLS_client_method());
   if (!ctx) {
@@ -588,7 +592,7 @@ WebTokenEngine::validate_signature(const DoutPrefixProvider* dpp, const jwt::dec
     //Headers
     cert_req.append_header("Content-Type", "application/x-www-form-urlencoded");
 
-    int res = cert_req.process(y);
+    int res = cert_req.process(dpp, y);
     if (res < 0) {
       ldpp_dout(dpp, 10) << "HTTP request res: " << res << dendl;
       throw std::system_error(EINVAL, std::system_category());
@@ -780,7 +784,7 @@ WebTokenEngine::authenticate( const DoutPrefixProvider* dpp,
       }
 
       std::unique_ptr<rgw::sal::RGWRole> role = driver->get_role(role_name, role_tenant, role_account);
-      int ret = role->get(dpp, y);
+      int ret = role->load_by_name(dpp, y);
       if (ret < 0) {
         ldpp_dout(dpp, 0) << "Role not found: name:" << role_name << " tenant: " << role_tenant << dendl;
         return result_t::deny(-EACCES);

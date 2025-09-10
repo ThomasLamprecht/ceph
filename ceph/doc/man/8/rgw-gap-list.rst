@@ -17,7 +17,7 @@ Description
 :program:`rgw-gap-list` is an *EXPERIMENTAL* RADOS gateway user
 administration utility. It produces a listing of bucket index entries
 that have missing backing RADOS objects. It places the results and
-intermediate files on a local filesystem rather than on the Ceph
+intermediate files on the local filesystem rather than on the Ceph
 cluster itself, and therefore will not itself consume additional
 cluster storage.
 

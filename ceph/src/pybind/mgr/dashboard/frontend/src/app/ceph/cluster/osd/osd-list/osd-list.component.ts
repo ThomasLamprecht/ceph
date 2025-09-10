@@ -38,6 +38,7 @@ import { OsdPgScrubModalComponent } from '../osd-pg-scrub-modal/osd-pg-scrub-mod
 import { OsdRecvSpeedModalComponent } from '../osd-recv-speed-modal/osd-recv-speed-modal.component';
 import { OsdReweightModalComponent } from '../osd-reweight-modal/osd-reweight-modal.component';
 import { OsdScrubModalComponent } from '../osd-scrub-modal/osd-scrub-modal.component';
+import { ModalCdsService } from '~/app/shared/services/modal-cds.service';
 import { CdTableFetchDataContext } from '~/app/shared/models/cd-table-fetch-data-context';
 import { Osd } from '~/app/shared/models/osd.model';
 import { DeletionImpact } from '~/app/shared/enum/delete-confirmation-modal-impact.enum';
@@ -113,7 +114,8 @@ export class OsdListComponent extends ListWithDetails implements OnInit {
     private taskWrapper: TaskWrapperService,
     public actionLabels: ActionLabelsI18n,
     public notificationService: NotificationService,
-    private orchService: OrchestratorService
+    private orchService: OrchestratorService,
+    private cdsModalService: ModalCdsService
   ) {
     super();
     this.permissions = this.authStorageService.getPermissions();
@@ -454,7 +456,7 @@ export class OsdListComponent extends ListWithDetails implements OnInit {
   editAction() {
     const selectedOsd = _.filter(this.osds, ['id', this.selection.first().id]).pop();
 
-    this.modalService.show(FormModalComponent, {
+    this.cdsModalService.show(FormModalComponent, {
       titleText: $localize`Edit OSD: ${selectedOsd.id}`,
       fields: [
         {
@@ -504,7 +506,7 @@ export class OsdListComponent extends ListWithDetails implements OnInit {
 
   showConfirmationModal(markAction: string, onSubmit: (id: number) => Observable<any>) {
     const osdIds = this.getSelectedOsdIds();
-    this.bsModalRef = this.modalService.show(ConfirmationModalComponent, {
+    this.bsModalRef = this.cdsModalService.show(ConfirmationModalComponent, {
       titleText: $localize`Mark OSD ${markAction}`,
       buttonText: $localize`Mark ${markAction}`,
       bodyTpl: this.markOsdConfirmationTpl,
@@ -515,7 +517,7 @@ export class OsdListComponent extends ListWithDetails implements OnInit {
       onSubmit: () => {
         observableForkJoin(
           this.getSelectedOsdIds().map((osd: any) => onSubmit.call(this.osdService, osd))
-        ).subscribe(() => this.bsModalRef.close());
+        ).subscribe(() => this.cdsModalService.dismissAll());
       }
     });
   }
@@ -581,7 +583,7 @@ export class OsdListComponent extends ListWithDetails implements OnInit {
   ): void {
     check(this.getSelectedOsdIds()).subscribe((result) => {
       const osdIds = this.getSelectedOsdIds();
-      const modalRef = this.modalService.show(DeleteConfirmationModalComponent, {
+      this.cdsModalService.show(DeleteConfirmationModalComponent, {
         impact: DeletionImpact.high,
         itemNames: osdIds,
         actionDescription: actionDescription,
@@ -606,17 +608,17 @@ export class OsdListComponent extends ListWithDetails implements OnInit {
             observable.subscribe({
               error: () => {
                 this.getOsdList();
-                modalRef.close();
+                this.cdsModalService.dismissAll();
               },
-              complete: () => modalRef.close()
+              complete: () => this.cdsModalService.dismissAll()
             });
           } else {
             observable.subscribe(
               () => {
                 this.getOsdList();
-                modalRef.close();
+                this.cdsModalService.dismissAll();
               },
-              () => modalRef.close()
+              () => this.cdsModalService.dismissAll()
             );
           }
         }

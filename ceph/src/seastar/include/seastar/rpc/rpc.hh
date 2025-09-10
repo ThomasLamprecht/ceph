@@ -154,9 +154,9 @@ struct server_options {
     bool tcp_nodelay = true;
     std::optional<streaming_domain_type> streaming_domain;
     server_socket::load_balancing_algorithm load_balancing_algorithm = server_socket::load_balancing_algorithm::default_;
-    // optional filter function. If set, will be called with remote 
-    // (connecting) address.    
-    // Returning false will refuse the incoming connection. 
+    // optional filter function. If set, will be called with remote
+    // (connecting) address.
+    // Returning false will refuse the incoming connection.
     // Returning true will allow the mechanism to proceed.
     std::function<bool(const socket_address&)> filter_connection = {};
 };
@@ -217,7 +217,13 @@ class logger {
         // Ignore less severe levels in order not to spam user's log with messages during transition,
         // i.e. when the user still only defines a level-less logger.
         } else if (_logger && level <= log_level::info) {
-            _logger(format(fmt, std::forward<Args>(args)...));
+            fmt::memory_buffer out;
+#ifdef SEASTAR_LOGGER_COMPILE_TIME_FMT
+            fmt::format_to(fmt::appender(out), fmt, std::forward<Args>(args)...);
+#else
+            fmt::format_to(fmt::appender(out), fmt::runtime(fmt), std::forward<Args>(args)...);
+#endif
+            _logger(sstring{out.data(), out.size()});
         }
     }
 

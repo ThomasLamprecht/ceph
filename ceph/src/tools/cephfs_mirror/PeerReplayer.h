@@ -11,6 +11,7 @@
 #include "Types.h"
 
 #include <stack>
+#include <boost/optional.hpp>
 
 namespace cephfs {
 namespace mirror {

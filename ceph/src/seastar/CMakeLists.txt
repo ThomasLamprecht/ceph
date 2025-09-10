@@ -27,7 +27,7 @@ list (APPEND CMAKE_MODULE_PATH
   ${CMAKE_CURRENT_BINARY_DIR})
 
 cmake_policy (SET CMP0090 NEW)
-foreach (policy CMP0127 CMP0135)
+foreach (policy CMP0127 CMP0135 CMP0167)
   if (POLICY ${policy})
     cmake_policy (SET ${policy} NEW)
   endif ()
@@ -73,11 +73,11 @@ set (Seastar_API_LEVEL
   "7"
   CACHE
   STRING
-  "Seastar compatibility API level (5=future<T>::get() returns T&&, 6=future is not variadic, 7=unified CPU/IO scheduling groups")
+  "Seastar compatibility API level (7=unified CPU/IO scheduling groups")
 
 set_property (CACHE Seastar_API_LEVEL
   PROPERTY
-  STRINGS 6)
+  STRINGS 7)
 
 set (Seastar_SCHEDULING_GROUPS_COUNT
   "16"
@@ -281,10 +281,6 @@ set (Seastar_LD_FLAGS
 option (Seastar_INSTALL
   "Install targets."
   ${Seastar_MASTER_PROJECT})
-
-option (Seastar_NUMA
-  "Enable NUMA support."
-  ON)
 
 option (Seastar_TESTING
   "Enable testing targets."
@@ -582,6 +578,7 @@ add_library (seastar
   include/seastar/core/shared_ptr_debug_helper.hh
   include/seastar/core/shared_ptr_incomplete.hh
   include/seastar/core/simple-stream.hh
+  include/seastar/core/signal.hh
   include/seastar/core/slab.hh
   include/seastar/core/sleep.hh
   include/seastar/core/sstring.hh
@@ -687,6 +684,7 @@ add_library (seastar
   include/seastar/util/closeable.hh
   include/seastar/util/source_location-compat.hh
   include/seastar/util/short_streams.hh
+  include/seastar/websocket/common.hh
   include/seastar/websocket/server.hh
   src/core/alien.cc
   src/core/file.cc
@@ -715,6 +713,7 @@ add_library (seastar
   src/core/sharded.cc
   src/core/scollectd.cc
   src/core/scollectd-impl.hh
+  src/core/signal.cc
   src/core/systemwide_memory_barrier.cc
   src/core/smp.cc
   src/core/sstring.cc
@@ -775,6 +774,8 @@ add_library (seastar
   src/util/read_first_line.cc
   src/util/tmp_file.cc
   src/util/short_streams.cc
+  src/websocket/parser.cc
+  src/websocket/common.cc
   src/websocket/server.cc
   )
 
@@ -796,7 +797,7 @@ target_include_directories (seastar
     ${CMAKE_CURRENT_SOURCE_DIR}/src)
 
 set (Seastar_PRIVATE_CXX_FLAGS
-  -UNDEBUG
+  -fno-semantic-interposition
   -Wall
   -Werror
   -Wimplicit-fallthrough
@@ -816,6 +817,14 @@ if (CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND
   list (APPEND Seastar_PRIVATE_CXX_FLAGS
     -Wdeprecated-declarations
     -Wno-error=deprecated-declarations)
+endif ()
+
+if (CMAKE_CXX_STANDARD GREATER_EQUAL 23)
+  include (CheckP2582R1)
+  if (Cxx_Compiler_IMPLEMENTS_P2581R1)
+    target_compile_definitions (seastar
+      PUBLIC SEASTAR_P2581R1)
+  endif ()
 endif ()
 
 if (BUILD_SHARED_LIBS)
@@ -880,7 +889,7 @@ if (condition)
   if (NOT Sanitizers_FOUND)
     message (FATAL_ERROR "Sanitizers not found!")
   endif ()
-  set (Seastar_Sanitizers_OPTIONS ${Sanitizers_COMPILER_OPTIONS})
+  set (Seastar_Sanitizers_OPTIONS ${Sanitizers_COMPILE_OPTIONS})
   target_link_libraries (seastar
     PUBLIC
       $<${condition}:Sanitizers::address>
@@ -894,19 +903,8 @@ set( MEMORYCHECK_COMMAND_OPTIONS "--error-exitcode=1 --leak-check=no --trace-chi
 include (CTest)
 
 #
-# We want asserts enabled on all modes, but cmake defaults to passing
-# -DNDEBUG in some modes. We add -UNDEBUG to our private options to
-# reenable it. To force asserts off pass -DNDEBUG in
-# Seastar_CXX_FLAGS.
-#
 # To disable -Werror, pass -Wno-error to Seastar_CXX_FLAGS.
 #
-# We disable _FORTIFY_SOURCE because it generates false positives with longjmp() (src/core/thread.cc)
-#
-
-target_compile_options (seastar
-  PUBLIC
-    -U_FORTIFY_SOURCE)
 
 target_compile_definitions(seastar
   PUBLIC
@@ -1045,13 +1043,6 @@ endif ()
 if (Seastar_LD_FLAGS)
   target_link_options (seastar
     PRIVATE ${Seastar_LD_FLAGS})
-endif ()
-
-if (Seastar_NUMA)
-  list (APPEND Seastar_PRIVATE_COMPILE_DEFINITIONS SEASTAR_HAVE_NUMA)
-
-  target_link_libraries (seastar
-    PRIVATE numactl::numactl)
 endif ()
 
 if (SystemTap-SDT_FOUND)
@@ -1260,7 +1251,9 @@ endif ()
 
 if (CMAKE_BUILD_TYPE STREQUAL "Dev")
   include (CheckHeaders)
+  include (CheckIncludeStyle)
   add_custom_target (checkheaders)
+  add_custom_target (check-include-style)
   foreach (lib seastar seastar_testing seastar_perf_testing)
     if (TARGET ${lib})
       seastar_check_self_contained (checkheaders ${lib}
@@ -1268,6 +1261,7 @@ if (CMAKE_BUILD_TYPE STREQUAL "Dev")
         # impl.hh headers are internal implementations of .hh, so they are not
         # compilable. let's exclude them from the files to be checked.
         EXCLUDE "_impl.hh$|-impl.hh$")
+      seastar_check_include_style (check-include-style ${lib})
     endif ()
   endforeach ()
 endif ()
@@ -1405,7 +1399,6 @@ if (Seastar_INSTALL)
       ${CMAKE_CURRENT_SOURCE_DIR}/cmake/Findhwloc.cmake
       ${CMAKE_CURRENT_SOURCE_DIR}/cmake/Findlksctp-tools.cmake
       ${CMAKE_CURRENT_SOURCE_DIR}/cmake/Findlz4.cmake
-      ${CMAKE_CURRENT_SOURCE_DIR}/cmake/Findnumactl.cmake
       ${CMAKE_CURRENT_SOURCE_DIR}/cmake/Findragel.cmake
       ${CMAKE_CURRENT_SOURCE_DIR}/cmake/Findrt.cmake
       ${CMAKE_CURRENT_SOURCE_DIR}/cmake/Finducontext.cmake

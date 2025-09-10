@@ -48,11 +48,13 @@
       group image add                   Add an image to a group.
       group image list (... ls)         List images in a group.
       group image remove (... rm)       Remove an image from a group.
+      group info                        Show information about a group.
       group list (group ls)             List rbd groups.
       group remove (group rm)           Delete a group.
       group rename                      Rename a group within its pool or
                                         namespace.
       group snap create                 Make a snapshot of a group.
+      group snap info                   Show information about a group snapshot.
       group snap list (... ls)          List snapshots of a group.
       group snap remove (... rm)        Remove a snapshot from a group.
       group snap rename                 Rename group's snapshot.
@@ -176,7 +178,8 @@
   usage: rbd bench [--pool <pool>] [--namespace <namespace>] [--image <image>] 
                    [--io-size <io-size>] [--io-threads <io-threads>] 
                    [--io-total <io-total>] [--io-pattern <io-pattern>] 
-                   [--rw-mix-read <rw-mix-read>] --io-type <io-type> 
+                   [--rw-mix-read <rw-mix-read>] 
+                   [--pattern-byte <pattern-byte>] --io-type <io-type> 
                    <image-spec> 
   
   Simple benchmark.
@@ -194,6 +197,8 @@
     --io-total arg       total size for IO (in B/K/M/G/T) [default: 1G]
     --io-pattern arg     IO pattern (rand, seq, or full-seq) [default: seq]
     --rw-mix-read arg    read proportion in readwrite (<= 100) [default: 50]
+    --pattern-byte arg   which byte value to write (integer between 0-255, rand
+                         or rand-str [default: rand]
     --io-type arg        IO type (read, write, or readwrite(rw))
   
   rbd help children
@@ -974,6 +979,24 @@
     --image arg           image name
     --image-id arg        image id
   
+  rbd help group info
+  usage: rbd group info [--pool <pool>] [--namespace <namespace>] 
+                        [--group <group>] [--format <format>] [--pretty-format] 
+                        <group-spec> 
+  
+  Show information about a group.
+  
+  Positional arguments
+    <group-spec>         group specification
+                         (example: [<pool-name>/[<namespace>/]]<group-name>)
+  
+  Optional arguments
+    -p [ --pool ] arg    pool name
+    --namespace arg      namespace name
+    --group arg          group name
+    --format arg         output format (plain, json, or xml) [default: plain]
+    --pretty-format      pretty formatting (json and xml)
+  
   rbd help group list
   usage: rbd group list [--pool <pool>] [--namespace <namespace>] 
                         [--format <format>] [--pretty-format] 
@@ -1050,6 +1073,27 @@
     --snap arg              snapshot name
     --skip-quiesce          do not run quiesce hooks
     --ignore-quiesce-error  ignore quiesce hook error
+  
+  rbd help group snap info
+  usage: rbd group snap info [--pool <pool>] [--namespace <namespace>] 
+                             [--group <group>] [--snap <snap>] 
+                             [--format <format>] [--pretty-format] 
+                             <group-snap-spec> 
+  
+  Show information about a group snapshot.
+  
+  Positional arguments
+    <group-snap-spec>    group specification
+                         (example:
+                         [<pool-name>/[<namespace>/]]<group-name>@<snap-name>)
+  
+  Optional arguments
+    -p [ --pool ] arg    pool name
+    --namespace arg      namespace name
+    --group arg          group name
+    --snap arg           snapshot name
+    --format arg         output format (plain, json, or xml) [default: plain]
+    --pretty-format      pretty formatting (json and xml)
   
   rbd help group snap list
   usage: rbd group snap list [--format <format>] [--pretty-format] 
@@ -1788,19 +1832,21 @@
   rbd help mirror pool enable
   usage: rbd mirror pool enable [--pool <pool>] [--namespace <namespace>] 
                                 [--site-name <site-name>] 
+                                [--remote-namespace <remote-namespace>] 
                                 <pool-spec> <mode> 
   
   Enable RBD mirroring in a pool or namespace.
   
   Positional arguments
-    <pool-spec>          pool specification
-                         (example: <pool-name>[/<namespace>]
-    <mode>               mirror mode [image or pool]
+    <pool-spec>            pool specification
+                           (example: <pool-name>[/<namespace>]
+    <mode>                 mirror mode [image, pool or init-only]
   
   Optional arguments
-    -p [ --pool ] arg    pool name
-    --namespace arg      namespace name
-    --site-name arg      local site name
+    -p [ --pool ] arg      pool name
+    --namespace arg        namespace name
+    --site-name arg        local site name
+    --remote-namespace arg remote namespace name
   
   rbd help mirror pool info
   usage: rbd mirror pool info [--pool <pool>] [--namespace <namespace>] 
@@ -2667,4 +2713,5 @@
     --namespace arg      namespace name
     --image arg          image name
   
+
 

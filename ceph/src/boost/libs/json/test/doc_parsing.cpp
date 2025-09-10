@@ -35,7 +35,7 @@ value jv = parse( "[1,2,3,4,5]" );
 //----------------------------------------------------------
 {
 //[doc_parsing_2
-error_code ec;
+boost::system::error_code ec;
 value jv = parse( "[1,2,3,4,5]", ec );
 if( ec )
     std::cout << "Parsing failed: " << ec.message() << "\n";
@@ -46,7 +46,7 @@ if( ec )
 //[doc_parsing_3
 try
 {
-    error_code ec;
+    boost::system::error_code ec;
     value jv = parse( "[1,2,3,4,5]", ec );
     if( ec )
         std::cout << "Parsing failed: " << ec.message() << "\n";
@@ -74,6 +74,7 @@ parse_options opt;                                  // all extensions default to
 opt.allow_comments = true;                          // permit C and C++ style comments to appear in whitespace
 opt.allow_trailing_commas = true;                   // allow an additional trailing comma in object and array element lists
 opt.allow_invalid_utf8 = true;                      // skip utf-8 validation of keys and strings
+opt.allow_invalid_utf16 = true;                     // replace invalid surrogate pair UTF-16 code point(s) with the Unicode replacement character
 
 value jv = parse( "[1,2,3,] // comment ", storage_ptr(), opt );
 //]
@@ -81,6 +82,7 @@ value jv = parse( "[1,2,3,] // comment ", storage_ptr(), opt );
 //----------------------------------------------------------
 {
 #if __cpp_designated_initializers >= 201707L
+{
 //[doc_parsing_6
 value jv = parse( "[1,2,3,] // comment ", storage_ptr(),
     {
@@ -89,6 +91,15 @@ value jv = parse( "[1,2,3,] // comment ", storage_ptr(),
         .allow_invalid_utf8 = true          // skip utf-8 validation of keys and strings
     });
 //]
+}
+{
+//[doc_parsing_15
+value jv = parse( "{\"command\":\"\\uDF3E\\uDEC2\"}", storage_ptr(),
+    {
+        .allow_invalid_utf16 = true       // replace illegal leading surrogate pair with ��
+    });
+//]
+}
 #endif
 }
 //----------------------------------------------------------
@@ -121,7 +132,7 @@ static void set2() {
 {
 //[doc_parsing_8
 stream_parser p;
-error_code ec;
+boost::system::error_code ec;
 string_view s = "[1,2,3] %HOME%";
 std::size_t n = p.write_some( s, ec );
 assert( ! ec && p.done() && n == 8 );
@@ -146,7 +157,7 @@ stream_parser p( storage_ptr(), opt );              // The stream_parser will us
 
 //----------------------------------------------------------
 //[doc_parsing_10
-value read_json( std::istream& is, error_code& ec )
+value read_json( std::istream& is, boost::system::error_code& ec )
 {
     stream_parser p;
     std::string line;
@@ -164,7 +175,7 @@ value read_json( std::istream& is, error_code& ec )
 //]
 
 //[doc_parsing_14
-std::vector<value> read_jsons( std::istream& is, error_code& ec )
+std::vector<value> read_jsons( std::istream& is, boost::system::error_code& ec )
 {
     std::vector< value > jvs;
     stream_parser p;
@@ -274,6 +285,20 @@ void do_rpc( string_view s, Handler&& handler )
 
 //----------------------------------------------------------
 
+void
+testPrecise()
+{
+    //[doc_parsing_precise
+    parse_options opt;
+    opt.numbers = number_precision::precise;
+    value jv = parse( "1002.9111801605201", storage_ptr(), opt );
+    //]
+    (void)jv;
+    assert( jv == 1002.9111801605201 );
+}
+
+//----------------------------------------------------------
+
 class doc_parsing_test
 {
 public:
@@ -289,7 +314,7 @@ public:
                                   "l12345\n"
                                   "6\"!\n"
                                   "\"[2]3" );
-            error_code ec;
+            system::error_code ec;
             auto jvs = read_jsons( ss, ec );
             assert( !ec.failed() );
             assert( jvs.size() == 6 );
@@ -300,6 +325,8 @@ public:
             assert(( jvs[4] == array{2} ));
             assert(( jvs[5] == 3 ));
         }
+
+        testPrecise();
     }
 };
 

@@ -16,9 +16,9 @@ sslDir="${depsToolsetDir}/openssl"
 sslSrcDir="${depsSrcDir}/openssl"
 
 # For now, we'll keep the version number within the file path when not using git.
-boostUrl="https://download.ceph.com/qa/boost_1_82_0.tar.bz2"
-boostSha256Sum="a6e1ab9b0860e6a2881dd7b21fe9f737a095e5f33a3a874afc6a345228597ee6"
-boostSrcDir="${depsSrcDir}/boost_1_82_0"
+boostUrl="https://download.ceph.com/qa/boost_1_87_0.tar.bz2"
+boostSha256Sum="af57be25cb4c4f4b413ed692fe378affb4352ea50fbe294a11ef548f4d527d89"
+boostSrcDir="${depsSrcDir}/boost_1_87_0"
 boostDir="${depsToolsetDir}/boost"
 zlibDir="${depsToolsetDir}/zlib"
 zlibSrcDir="${depsSrcDir}/zlib"
@@ -231,25 +231,18 @@ patch -N boost/thread/pthread/thread_data.hpp <<EOL
  #endif
 EOL
 
-# https://github.com/boostorg/stacktrace/pull/140
-# https://github.com/boostorg/stacktrace/issues/133
-patch -N boost/stacktrace/detail/frame_msvc.ipp <<'EOL'
---- boost/stacktrace/detail/frame_msvc.ipp      2023-08-18 12:29:37.127229733 +0000
-+++ boost/stacktrace/detail/frame_msvc.ipp.new  2023-08-18 12:28:23.713294554 +0000
-@@ -28,9 +28,13 @@
+patch -N libs/stacktrace/src/from_exception.cpp <<EOL
+--- libs/stacktrace/src/from_exception.cpp        2019-10-11 15:26:15.678703586 +0300
++++ libs/stacktrace/src/from_exception.cpp.new    2019-10-11 15:26:07.321463698 +0300
+@@ -4,7 +4,7 @@
+ // accompanying file LICENSE_1_0.txt or copy at
+ // http://www.boost.org/LICENSE_1_0.txt)
 
+-#if defined(_MSC_VER)
++#if defined(__MINGW32__) || defined(_MSC_VER)
 
- #ifdef __CRT_UUID_DECL // for __MINGW32__
-+#if !defined(__MINGW32__) || \
-+    (!defined(__clang__) && __GNUC__ < 12) || \
-+    (defined(__clang__) && __clang_major__ < 16)
-     __CRT_UUID_DECL(IDebugClient,0x27fe5639,0x8407,0x4f47,0x83,0x64,0xee,0x11,0x8f,0xb0,0x8a,0xc8)
-     __CRT_UUID_DECL(IDebugControl,0x5182e668,0x105e,0x416e,0xad,0x92,0x24,0xef,0x80,0x04,0x24,0xba)
-     __CRT_UUID_DECL(IDebugSymbols,0x8c31e98c,0x983a,0x48a5,0x90,0x16,0x6f,0xe5,0xd6,0x67,0xa9,0x50)
-+#endif
- #elif defined(DEFINE_GUID) && !defined(BOOST_MSVC)
-     DEFINE_GUID(IID_IDebugClient,0x27fe5639,0x8407,0x4f47,0x83,0x64,0xee,0x11,0x8f,0xb0,0x8a,0xc8);
-     DEFINE_GUID(IID_IDebugControl,0x5182e668,0x105e,0x416e,0xad,0x92,0x24,0xef,0x80,0x04,0x24,0xba);
+ #include <boost/stacktrace/safe_dump_to.hpp>
+ #include <windows.h>
 EOL
 
 ./bootstrap.sh

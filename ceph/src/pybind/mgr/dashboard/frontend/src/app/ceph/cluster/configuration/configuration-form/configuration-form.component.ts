@@ -13,8 +13,8 @@ import { CdForm } from '~/app/shared/forms/cd-form';
 import { CdFormGroup } from '~/app/shared/forms/cd-form-group';
 import { NotificationService } from '~/app/shared/services/notification.service';
 import { ConfigFormCreateRequestModel } from './configuration-form-create-request.model';
-import { ModalService } from '~/app/shared/services/modal.service';
 import { DeleteConfirmationModalComponent } from '~/app/shared/components/delete-confirmation-modal/delete-confirmation-modal.component';
+import { ModalCdsService } from '~/app/shared/services/modal-cds.service';
 
 const RGW = 'rgw';
 
@@ -41,7 +41,7 @@ export class ConfigurationFormComponent extends CdForm implements OnInit {
     private router: Router,
     private configService: ConfigurationService,
     private notificationService: NotificationService,
-    private modalService: ModalService
+    private modalService: ModalCdsService
   ) {
     super();
     this.createForm();

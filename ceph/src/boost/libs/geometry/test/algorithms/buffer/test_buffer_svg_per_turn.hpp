@@ -15,6 +15,8 @@
 #ifndef BOOST_GEOMETRY_TEST_BUFFER_SVG_PER_TURN_HPP
 #define BOOST_GEOMETRY_TEST_BUFFER_SVG_PER_TURN_HPP
 
+#if defined(TEST_WITH_SVG_PER_TURN)
+
 #include <fstream>
 #include <vector>
 
@@ -146,10 +148,9 @@ public :
     template <typename PieceCollection>
     inline void apply(PieceCollection const& collection, int phase)
     {
-        for(typename container_type::iterator it = mappers.begin();
-            it != mappers.end(); ++it)
+        for (auto& item : mappers)
         {
-            it->apply(collection, phase);
+            item.apply(collection, phase);
         }
     }
 
@@ -157,13 +158,13 @@ public :
     void map_input_output(Geometry const& geometry,
             GeometryBuffer const& buffered, bool negative)
     {
-        for(typename container_type::iterator it = mappers.begin();
-            it != mappers.end(); ++it)
+        for (auto& item : mappers)
         {
-           it->map_input_output(geometry, buffered, negative);
+           item.map_input_output(geometry, buffered, negative);
         }
     }
 };
 
+#endif
 
 #endif // BOOST_GEOMETRY_TEST_BUFFER_SVG_PER_TURN_HPP

@@ -25,6 +25,7 @@
  */
 
 #include <seastar/testing/linux_perf_event.hh>
+#include <seastar/util/assert.hh>
 
 #include <linux/perf_event.h>
 #include <linux/hw_breakpoint.h>
@@ -61,7 +62,8 @@ linux_perf_event::read() {
         return 0;
     }
     uint64_t ret;
-    ::read(_fd, &ret, sizeof(ret));
+    auto res = ::read(_fd, &ret, sizeof(ret));
+    SEASTAR_ASSERT(res == sizeof(ret) && "read(2) failed on perf_event fd");
     return ret;
 }
 

@@ -1,5 +1,4 @@
-// Copyright 2008-2022 Emil Dotchevski and Reverge Studios, Inc.
-
+// Copyright 2008-2024 Emil Dotchevski and Reverge Studios, Inc.
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
 
@@ -12,10 +11,13 @@
 #   include <boost/qvm/vec_operations.hpp>
 #   include <boost/qvm/vec_access.hpp>
 #   include <boost/qvm/vec.hpp>
+#   include <boost/qvm/mat.hpp>
+#   include <boost/qvm/map_vec_mat.hpp>
 #   include <boost/qvm/swizzle.hpp>
 #endif
 
 #include "test_qvm_vector.hpp"
+#include "test_qvm_matrix.hpp"
 
 int
 main()
@@ -107,6 +109,16 @@ main()
         test_qvm::vector<V1,2> v=_11();
         BOOST_TEST(v.a[0]==1);
         BOOST_TEST(v.a[1]==1);
+        }
+        {
+        test_qvm::matrix<V1,2,2> v = diag_mat(_0X(1));
+        BOOST_TEST(v.a[0][0] == 0);
+        BOOST_TEST(v.a[1][1] == 1);
+        }
+        {
+        test_qvm::matrix<V1,2,2> v = diag_mat(X0(1));
+        BOOST_TEST(v.a[0][0] == 1);
+        BOOST_TEST(v.a[1][1] == 0);
         }
     return boost::report_errors();
     }

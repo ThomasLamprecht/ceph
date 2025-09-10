@@ -160,11 +160,27 @@ namespace librbd {
   } group_info_t;
 
   typedef rbd_group_snap_state_t group_snap_state_t;
+  typedef rbd_group_snap_namespace_type_t group_snap_namespace_type_t;
+
+  typedef struct {
+    std::string image_name;
+    int64_t pool_id;
+    uint64_t snap_id;
+  } group_image_snap_info_t;
 
   typedef struct {
     std::string name;
     group_snap_state_t state;
   } group_snap_info_t;
+
+  typedef struct {
+    std::string id;
+    std::string name;
+    std::string image_snap_name;
+    group_snap_state_t state;
+    group_snap_namespace_type_t namespace_type;
+    std::vector<group_image_snap_info_t> image_snaps;
+  } group_snap_info2_t;
 
   typedef rbd_image_info_t image_info_t;
 
@@ -342,6 +358,16 @@ public:
   int mirror_mode_get(IoCtx& io_ctx, rbd_mirror_mode_t *mirror_mode);
   int mirror_mode_set(IoCtx& io_ctx, rbd_mirror_mode_t mirror_mode);
 
+  int mirror_remote_namespace_get(IoCtx& io_ctx,
+                                  std::string* remote_namespace);
+
+  /**
+   * The value can be set only if mirroring on io_ctx is disabled. The
+   * previously set value will be automatically reset to io_ctx's namespace when
+   * mirroring on io_ctx is disabled.
+   */
+  int mirror_remote_namespace_set(IoCtx& io_ctx,
+                                  const std::string& remote_namespace);
   int mirror_uuid_get(IoCtx& io_ctx, std::string* mirror_uuid);
 
   int mirror_peer_bootstrap_create(IoCtx& io_ctx, std::string* token);
@@ -417,6 +443,8 @@ public:
   int group_create(IoCtx& io_ctx, const char *group_name);
   int group_remove(IoCtx& io_ctx, const char *group_name);
   int group_list(IoCtx& io_ctx, std::vector<std::string> *names);
+  int group_get_id(IoCtx& io_ctx, const char *group_name,
+                   std::string *group_id);
   int group_rename(IoCtx& io_ctx, const char *src_group_name,
                    const char *dest_group_name);
 
@@ -441,6 +469,11 @@ public:
   int group_snap_list(IoCtx& group_ioctx, const char *group_name,
                       std::vector<group_snap_info_t> *snaps,
                       size_t group_snap_info_size);
+  int group_snap_list2(IoCtx& group_ioctx, const char *group_name,
+                       std::vector<group_snap_info2_t> *snaps);
+  int group_snap_get_info(IoCtx& group_ioctx, const char *group_name,
+                          const char *snap_name,
+                          group_snap_info2_t *group_snap);
   int group_snap_rollback(IoCtx& io_ctx, const char *group_name,
                           const char *snap_name);
   int group_snap_rollback_with_progress(IoCtx& io_ctx, const char *group_name,
@@ -538,6 +571,14 @@ class CEPH_RBD_API Image
 public:
   Image();
   ~Image();
+
+  // non-copyable
+  Image(const Image& rhs) = delete;
+  Image& operator=(const Image& rhs) = delete;
+
+  // moveable
+  Image(Image&& rhs) noexcept;
+  Image& operator=(Image&& rhs) noexcept;
 
   int close();
   int aio_close(RBD::AioCompletion *c);
@@ -866,9 +907,6 @@ public:
 
 private:
   friend class RBD;
-
-  Image(const Image& rhs);
-  const Image& operator=(const Image& rhs);
 
   image_ctx_t ctx;
 };

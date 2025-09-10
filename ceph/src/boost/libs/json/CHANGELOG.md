@@ -1,3 +1,52 @@
+Boost 1.86.0
+
+* Support for GCC versions older than version 5.0 is deprecated and **will stop
+  in Boost 1.88.0**.
+* `source_location` parameter was added to throwing accessor functions.
+* Parse option to tolerate invalid UTF-16 surrogate pairs, and
+  produce [WTF-8](https://simonsapin.github.io/wtf-8/).
+* Added accessor functions that return `system::result`.
+* Handle missing error case in direct parsing.
+
+Boost 1.85.0
+
+* Boost.Endian is now used to deal with endianness.
+* Aliases to Boost.System and Boost.Container components are deprecated and
+  will be completely removed in 1.87.0.
+* Conversion of described classes supports private members
+* Rvalue reference overload for `visit`.
+* Add conversion support for path-like types.
+* Parsing into described classes correctly considers inherited members.
+* Conversion of self-referential sequences is disabled.
+* Fixed reference handling in visit.
+
+Boost 1.84.0
+
+* Add a conversion category for variants.
+* Add a conversion category for optionals.
+* Relax iterator requirements for constructors from iterator pairs.
+* Parsing directly into user types.
+* Fix reading beyond input buffer.
+* Fix inconsistent choice of init list constructor.
+
+Boost 1.83.0
+
+* The library now only throws `system_error`, except for when allocation
+  failed, in which case `std::bad_alloc` is thrown.
+* Serialization behavior can now be changed by `serialize_options`.
+* Contextual conversions.
+* Parser option for more precise number parsing.
+* Support `parse_options` in stream `operator<<`.
+* Parser option to allow `Infinity` and `NaN` JSON literals.
+* Parser mode that only validates numbers rather than parsing them.
+* Numbers with exponent larger than `INT_MAX` are accepted by the parser and
+  treated as infinity.
+* Fix `object` member functions that should provide strong guarantee.
+* Fix ambiguity of `end` call when `boost/range.hpp` is included.
+* Fix ASan failures.
+* Fix error message for `error::size_mismatch`.
+* Fix conversion into tuple with const elements.
+
 Boost 1.82.0
 
 * `set_at_pointer`.

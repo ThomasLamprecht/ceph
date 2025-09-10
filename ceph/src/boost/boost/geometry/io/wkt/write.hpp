@@ -3,12 +3,11 @@
 // Copyright (c) 2007-2022 Barend Gehrels, Amsterdam, the Netherlands.
 // Copyright (c) 2008-2017 Bruno Lalande, Paris, France.
 // Copyright (c) 2009-2017 Mateusz Loskot, London, UK.
-// Copyright (c) 2014-2017 Adam Wulkiewicz, Lodz, Poland.
+// Copyright (c) 2014-2023 Adam Wulkiewicz, Lodz, Poland.
 // Copyright (c) 2020 Baidyanath Kundu, Haldia, India.
 
 // This file was modified by Oracle on 2015-2021.
 // Modifications copyright (c) 2015-2021, Oracle and/or its affiliates.
-
 // Contributed and/or modified by Menelaos Karavelas, on behalf of Oracle
 // Contributed and/or modified by Adam Wulkiewicz, on behalf of Oracle
 
@@ -22,16 +21,15 @@
 #ifndef BOOST_GEOMETRY_IO_WKT_WRITE_HPP
 #define BOOST_GEOMETRY_IO_WKT_WRITE_HPP
 
+#include <array>
 #include <ostream>
 #include <string>
 
-#include <boost/array.hpp>
 #include <boost/range/begin.hpp>
 #include <boost/range/end.hpp>
 #include <boost/range/size.hpp>
 #include <boost/range/value_type.hpp>
 
-#include <boost/geometry/algorithms/detail/interior_iterator.hpp>
 #include <boost/geometry/algorithms/assign.hpp>
 #include <boost/geometry/algorithms/convert.hpp>
 #include <boost/geometry/algorithms/detail/disjoint/point_point.hpp>
@@ -52,7 +50,7 @@
 #include <boost/geometry/strategies/io/geographic.hpp>
 #include <boost/geometry/strategies/io/spherical.hpp>
 
-#include <boost/geometry/util/condition.hpp>
+#include <boost/geometry/util/constexpr.hpp>
 #include <boost/geometry/util/type_traits.hpp>
 
 
@@ -61,8 +59,8 @@ namespace boost { namespace geometry
 
 // Silence warning C4512: 'boost::geometry::wkt_manipulator<Geometry>' : assignment operator could not be generated
 #if defined(_MSC_VER)
-#pragma warning(push)  
-#pragma warning(disable : 4512)  
+#pragma warning(push)
+#pragma warning(disable : 4512)
 #endif
 
 #ifndef DOXYGEN_NO_DETAIL
@@ -89,7 +87,7 @@ struct stream_coordinate<P, Count, Count>
 };
 
 /*!
-\brief Stream points as \ref WKT
+\brief Stream points as \wkt
 */
 template <typename Point, typename Policy>
 struct wkt_point
@@ -131,12 +129,12 @@ struct wkt_range
 
         if (boost::size(range) > 0)
         {
-            if (WriteDoubleBrackets)
+            if BOOST_GEOMETRY_CONSTEXPR (WriteDoubleBrackets)
             {
                 os << "(";
             }
             auto begin = boost::begin(range);
-            auto end = boost::end(range);
+            auto const end = boost::end(range);
             for (auto it = begin; it != end; ++it)
             {
                 os << (first ? "" : ",");
@@ -145,15 +143,17 @@ struct wkt_range
             }
 
             // optionally, close range to ring by repeating the first point
-            if (BOOST_GEOMETRY_CONDITION(ForceClosurePossible)
-                && force_closure
-                && boost::size(range) > 1
-                && wkt_range::disjoint(*begin, *(end - 1)))
+            if BOOST_GEOMETRY_CONSTEXPR (ForceClosurePossible)
             {
-                os << ",";
-                stream_type::apply(os, *begin);
+                if (force_closure
+                    && boost::size(range) > 1
+                    && wkt_range::disjoint(*begin, *(end - 1)))
+                {
+                    os << ",";
+                    stream_type::apply(os, *begin);
+                }
             }
-            if (WriteDoubleBrackets)
+            if BOOST_GEOMETRY_CONSTEXPR (WriteDoubleBrackets)
             {
                 os << ")";
             }
@@ -201,8 +201,8 @@ struct wkt_poly
     {
         using ring = typename ring_type<Polygon const>::type;
 
-        auto const exterior = exterior_ring(poly);
-        auto const rings = interior_rings(poly);
+        auto const& exterior = exterior_ring(poly);
+        auto const& rings = interior_rings(poly);
 
         std::size_t point_count = boost::size(exterior);
         for (auto it = boost::begin(rings); it != boost::end(rings); ++it)
@@ -254,7 +254,7 @@ struct wkt_multi
 template <typename Box>
 struct wkt_box
 {
-    using point_type = typename point_type<Box>::type;
+    using point_type = point_type_t<Box>;
 
     template <typename Char, typename Traits>
     static inline void apply(std::basic_ostream<Char, Traits>& os,
@@ -298,14 +298,14 @@ struct wkt_box
 template <typename Segment>
 struct wkt_segment
 {
-    using point_type = typename point_type<Segment>::type;
+    using point_type = point_type_t<Segment>;
 
     template <typename Char, typename Traits>
     static inline void apply(std::basic_ostream<Char, Traits>& os,
                 Segment const& segment, bool)
     {
         // Convert to two points, then stream
-        using sequence = boost::array<point_type, 2>;
+        using sequence = std::array<point_type, 2>;
 
         sequence points;
         geometry::detail::assign_point_from_index<0>(segment, points[0]);
@@ -510,7 +510,7 @@ private:
 /*!
 \brief Generic geometry template manipulator class, takes corresponding output class from traits class
 \ingroup wkt
-\details Stream manipulator, streams geometry classes as \ref WKT streams
+\details Stream manipulator, streams geometry classes as \wkt streams
 \par Example:
 Small example showing how to use the wkt class
 \dontinclude doxygen_1.cpp
@@ -567,7 +567,6 @@ inline wkt_manipulator<Geometry> wkt(Geometry const& geometry)
 \brief WKT-string formulating function
 \tparam Geometry \tparam_geometry
 \param geometry \param_geometry
-\param significant_digits Specifies the no of significant digits to use in the output wkt
 \ingroup wkt
 \qbk{[include reference/io/to_wkt.qbk]}
 */
@@ -579,6 +578,14 @@ inline std::string to_wkt(Geometry const& geometry)
     return ss.str();
 }
 
+/*!
+\brief WKT-string formulating function (with significant digits)
+\tparam Geometry \tparam_geometry
+\param geometry \param_geometry
+\param significant_digits Specifies the number of significant digits to use in the output wkt
+\ingroup wkt
+\qbk{distinguish, with significant digits}
+*/
 template <typename Geometry>
 inline std::string to_wkt(Geometry const& geometry, int significant_digits)
 {
@@ -589,7 +596,7 @@ inline std::string to_wkt(Geometry const& geometry, int significant_digits)
 }
 
 #if defined(_MSC_VER)
-#pragma warning(pop)  
+#pragma warning(pop)
 #endif
 
 }} // namespace boost::geometry

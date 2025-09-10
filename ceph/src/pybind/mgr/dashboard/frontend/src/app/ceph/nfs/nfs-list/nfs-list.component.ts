@@ -1,4 +1,4 @@
-import { Component, OnDestroy, OnInit, TemplateRef, ViewChild } from '@angular/core';
+import { Component, Input, OnDestroy, OnInit, TemplateRef, ViewChild } from '@angular/core';
 import { Router } from '@angular/router';
 
 import { NgbModalRef } from '@ng-bootstrap/ng-bootstrap';
@@ -20,11 +20,11 @@ import { FinishedTask } from '~/app/shared/models/finished-task';
 import { Permission } from '~/app/shared/models/permissions';
 import { Task } from '~/app/shared/models/task';
 import { AuthStorageService } from '~/app/shared/services/auth-storage.service';
-import { ModalService } from '~/app/shared/services/modal.service';
 import { TaskListService } from '~/app/shared/services/task-list.service';
 import { TaskWrapperService } from '~/app/shared/services/task-wrapper.service';
 import { getFsalFromRoute, getPathfromFsal } from '../utils';
 import { SUPPORTED_FSAL } from '../models/nfs.fsal';
+import { ModalCdsService } from '~/app/shared/services/modal-cds.service';
 import { DeletionImpact } from '~/app/shared/enum/delete-confirmation-modal-impact.enum';
 
 export enum RgwExportType {
@@ -43,9 +43,20 @@ export class NfsListComponent extends ListWithDetails implements OnInit, OnDestr
   nfsState: TemplateRef<any>;
   @ViewChild('nfsFsal', { static: true })
   nfsFsal: TemplateRef<any>;
+  @ViewChild('pathTmpl', { static: true })
+  pathTmpl: TemplateRef<any>;
 
   @ViewChild('table', { static: true })
   table: TableComponent;
+
+  @ViewChild('protocolTpl', { static: true })
+  protocolTpl: TemplateRef<any>;
+
+  @ViewChild('transportTpl', { static: true })
+  transportTpl: TemplateRef<any>;
+
+  @Input() clusterId: string;
+  modalRef: NgbModalRef;
 
   columns: CdTableColumn[];
   permission: Permission;
@@ -56,8 +67,6 @@ export class NfsListComponent extends ListWithDetails implements OnInit, OnDestr
   tableActions: CdTableAction[];
   isDefaultCluster = false;
   fsal: SUPPORTED_FSAL;
-
-  modalRef: NgbModalRef;
 
   builders = {
     'nfs/create': (metadata: any) => {
@@ -71,7 +80,7 @@ export class NfsListComponent extends ListWithDetails implements OnInit, OnDestr
 
   constructor(
     private authStorageService: AuthStorageService,
-    private modalService: ModalService,
+    private modalService: ModalCdsService,
     private nfsService: NfsService,
     private taskListService: TaskListService,
     private taskWrapper: TaskWrapperService,
@@ -99,7 +108,15 @@ export class NfsListComponent extends ListWithDetails implements OnInit, OnDestr
     const editAction: CdTableAction = {
       permission: 'update',
       icon: Icons.edit,
-      routerLink: () => `/${prefix}/nfs/edit/${getNfsUri()}`,
+      routerLink: () => [
+        `/${prefix}/nfs/edit/${getNfsUri()}`,
+        {
+          rgw_export_type:
+            this.fsal === SUPPORTED_FSAL.RGW && !_.isEmpty(this.selection?.first()?.path)
+              ? RgwExportType.BUCKET
+              : RgwExportType.USER
+        }
+      ],
       name: this.actionLabels.EDIT
     };
 
@@ -116,10 +133,17 @@ export class NfsListComponent extends ListWithDetails implements OnInit, OnDestr
   ngOnInit() {
     this.columns = [
       {
+        name: $localize`User`,
+        prop: 'fsal.user_id',
+        flexGrow: 2,
+        cellTransformation: CellTemplate.executing
+      },
+      {
         name: this.fsal === SUPPORTED_FSAL.CEPH ? $localize`Path` : $localize`Bucket`,
         prop: 'path',
         flexGrow: 2,
-        cellTransformation: CellTemplate.executing
+        cellTemplate: this.pathTmpl,
+        cellTransformation: CellTemplate.path
       },
       {
         name: $localize`Pseudo`,
@@ -141,11 +165,23 @@ export class NfsListComponent extends ListWithDetails implements OnInit, OnDestr
         name: $localize`Access Type`,
         prop: 'access_type',
         flexGrow: 2
+      },
+      {
+        name: $localize`NFS Protocol`,
+        prop: 'protocols',
+        flexGrow: 2,
+        cellTemplate: this.protocolTpl
+      },
+      {
+        name: $localize`Transports`,
+        prop: 'transports',
+        flexGrow: 2,
+        cellTemplate: this.transportTpl
       }
     ];
 
     this.taskListService.init(
-      () => this.nfsService.list(),
+      () => this.nfsService.list(this.clusterId),
       (resp) => this.prepareResponse(resp),
       (exports) => (this.exports = exports),
       () => this.onFetchError(),

@@ -549,7 +549,7 @@ commits will be squashed into a single commit.
 
 #. Make the commits that you will later squash.
 
-   #. Make the first commit.
+   A. Make the first commit.
 
       ::
 
@@ -567,7 +567,7 @@ commits will be squashed into a single commit.
          #       modified:   glossary.rst
          #
 
-   #. Make the second commit.
+   B. Make the second commit.
 
       ::
 
@@ -587,7 +587,7 @@ commits will be squashed into a single commit.
             # Changes to be committed:
             #       modified:   architecture.rst
 
-   #. Make the third commit.
+   C. Make the third commit.
 
       ::
 
@@ -610,14 +610,14 @@ commits will be squashed into a single commit.
 #. There are now three commits in the feature branch. We will now begin the
    process of squashing them into a single commit.
 
-   #. Run the command ``git rebase -i main``, which rebases the current branch
+   A. Run the command ``git rebase -i main``, which rebases the current branch
       (the feature branch) against the ``main`` branch:
 
       .. prompt:: bash
 
          git rebase -i main
 
-   #. A list of the commits that have been made to the feature branch now
+   B. A list of the commits that have been made to the feature branch now
       appear, and looks like this:
 
       ::
@@ -698,7 +698,7 @@ commits will be squashed into a single commit.
 #. Now we create a commit message that applies to all the commits that have
    been squashed together:
 
-   #. When you save and close the list of commits that you have designated for
+   A. When you save and close the list of commits that you have designated for
       squashing, a list of all three commit messages appears, and it looks
       like this:
 
@@ -747,7 +747,7 @@ commits will be squashed into a single commit.
          #       modified:   doc/architecture.rst
          #       modified:   doc/glossary.rst
 
-   #. The commit messages have been revised into the simpler form presented here:
+   B. The commit messages have been revised into the simpler form presented here:
 
       ::
 

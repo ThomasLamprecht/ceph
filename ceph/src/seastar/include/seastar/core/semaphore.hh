@@ -28,9 +28,9 @@
 #include <seastar/core/abortable_fifo.hh>
 #include <seastar/core/timed_out_error.hh>
 #include <seastar/core/abort_on_expiry.hh>
+#include <seastar/util/assert.hh>
 #include <seastar/util/modules.hh>
 #ifndef SEASTAR_MODULE
-#include <cassert>
 #include <exception>
 #include <optional>
 #include <stdexcept>
@@ -166,27 +166,35 @@ private:
         std::optional<abort_on_expiry<clock>> timer;
         entry(promise<>&& pr_, size_t nr_) noexcept : pr(std::move(pr_)), nr(nr_) {}
     };
+    std::exception_ptr get_timeout_exception() {
+        try {
+            return std::make_exception_ptr(this->timeout());
+        } catch (...) {
+            return std::make_exception_ptr(semaphore_timed_out());
+        }
+    }
+    std::exception_ptr get_aborted_exception() {
+        if constexpr (internal::has_aborted<exception_factory>::value) {
+            try {
+                return std::make_exception_ptr(this->aborted());
+            } catch (...) {
+                return std::make_exception_ptr(semaphore_aborted());
+            }
+        } else {
+            return std::make_exception_ptr(semaphore_aborted());
+        }
+    }
     struct expiry_handler {
         basic_semaphore& sem;
-        void operator()(entry& e) noexcept {
+        void operator()(entry& e, const std::optional<std::exception_ptr>& ex) noexcept {
             if (e.timer) {
-                try {
-                    e.pr.set_exception(sem.timeout());
-                } catch (...) {
-                    e.pr.set_exception(semaphore_timed_out());
-                }
+                e.pr.set_exception(sem.get_timeout_exception());
+            } else if (ex) {
+                e.pr.set_exception(*ex);
             } else if (sem._ex) {
                 e.pr.set_exception(sem._ex);
             } else {
-                if constexpr (internal::has_aborted<exception_factory>::value) {
-                    try {
-                        e.pr.set_exception(static_cast<exception_factory>(sem).aborted());
-                    } catch (...) {
-                        e.pr.set_exception(semaphore_aborted());
-                    }
-                } else {
-                    e.pr.set_exception(semaphore_aborted());
-                }
+                e.pr.set_exception(sem.get_aborted_exception());
             }
         }
     };
@@ -200,11 +208,11 @@ private:
 
         used_flag() = default;
         used_flag(used_flag&& o) noexcept {
-            assert(!_used && "semaphore cannot be moved after it has been used");
+            SEASTAR_ASSERT(!_used && "semaphore cannot be moved after it has been used");
         }
         used_flag& operator=(used_flag&& o) noexcept {
             if (this != &o) {
-                assert(!_used && !o._used && "semaphore cannot be moved after it has been used");
+                SEASTAR_ASSERT(!_used && !o._used && "semaphore cannot be moved after it has been used");
             }
             return *this;
         }
@@ -263,7 +271,7 @@ public:
         , _used(std::move(other._used))
     {
         // semaphore cannot be moved with non-empty waiting list
-        assert(other._wait_list.empty());
+        SEASTAR_ASSERT(other._wait_list.empty());
     }
 
     /// Move-assigns a semaphore object from a moved-from semaphore object,
@@ -275,8 +283,8 @@ public:
     /// \param other the moved-from semaphore object.
     basic_semaphore& operator=(basic_semaphore&& other) noexcept(std::is_nothrow_move_assignable_v<exception_factory>) {
         // semaphore cannot be moved with non-empty waiting list
-        assert(_wait_list.empty());
-        assert(other._wait_list.empty());
+        SEASTAR_ASSERT(_wait_list.empty());
+        SEASTAR_ASSERT(other._wait_list.empty());
         if (this != &other) {
             exception_factory::operator=(other);
             _count = other._count;
@@ -321,6 +329,9 @@ public:
         if (_ex) {
             return make_exception_future(_ex);
         }
+        if (Clock::now() >= timeout) [[unlikely]] {
+            return make_exception_future(get_timeout_exception());
+        }
         try {
             entry& e = _wait_list.emplace_back(promise<>(), nr);
             auto f = e.pr.get_future();
@@ -356,6 +367,9 @@ public:
         }
         if (_ex) {
             return make_exception_future(_ex);
+        }
+        if (as.abort_requested()) [[unlikely]] {
+            return make_exception_future(get_aborted_exception());
         }
         try {
             entry& e = _wait_list.emplace_back(promise<>(), nr);
@@ -579,7 +593,7 @@ public:
     ///
     /// \return the updated semaphore_units object
     void adopt(semaphore_units&& other) noexcept {
-        assert(other._sem == _sem);
+        SEASTAR_ASSERT(other._sem == _sem);
         _n += other.release();
     }
 

@@ -1,8 +1,7 @@
 #ifndef BOOST_QVM_QUAT_OPERATIONS
 #define BOOST_QVM_QUAT_OPERATIONS
 
-// Copyright 2008-2022 Emil Dotchevski and Reverge Studios, Inc.
-
+// Copyright 2008-2024 Emil Dotchevski and Reverge Studios, Inc.
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
 
@@ -14,8 +13,7 @@
 #include <boost/qvm/assert.hpp>
 #include <boost/qvm/error.hpp>
 #include <boost/qvm/throw_exception.hpp>
-#include <string>
-#include <cmath>
+#include <boost/qvm/to_string.hpp>
 
 namespace boost { namespace qvm {
 
@@ -44,12 +42,6 @@ msvc_parse_bug_workaround
         };
     }
 
-namespace
-qvm_to_string_detail
-    {
-    template <class T>
-    std::string to_string( T const & x );
-    }
 
 template <class A>
 inline

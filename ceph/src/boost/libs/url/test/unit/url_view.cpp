@@ -83,7 +83,36 @@ public:
             BOOST_TEST_EQ(u1.data(), u2.data());
         }
 
-        // url_view(string_view)
+        // issue #872
+        {
+            url base{"https://127.0.0.1"};
+            url_view ref = "/foo";
+
+            // url_view(url)
+            {
+                url_view base_view{base};
+                BOOST_TEST(base_view.has_scheme());
+                url dest;
+                auto res = resolve(base_view, ref, dest);
+                BOOST_TEST(res);
+                BOOST_TEST(dest.has_scheme());
+                BOOST_TEST_EQ(dest.buffer(), "https://127.0.0.1/foo");
+            }
+
+            // url_view::operator=(url)
+            {
+                url_view base_view;
+                base_view = base;
+                BOOST_TEST(base_view.has_scheme());
+                url dest;
+                auto res = resolve(base_view, ref, dest);
+                BOOST_TEST(res);
+                BOOST_TEST(dest.has_scheme());
+                BOOST_TEST_EQ(dest.buffer(), "https://127.0.0.1/foo");
+            }
+        }
+
+        // url_view(core::string_view)
         {
             BOOST_TEST_NO_THROW(url_view(
                 "http://example.com/path/to/file.txt?#"));
@@ -91,13 +120,13 @@ public:
                 std::exception);
         }
 
-        // url_view(string_view) no ambiguous
+        // url_view(core::string_view) no ambiguous
         {
-            string_view s = "";
+            core::string_view s = "";
             BOOST_TEST_NO_THROW(url_view( s ));
         }
 
-        // implicit url_view(string_view)
+        // implicit url_view(core::string_view)
         {
             auto const f = []( url_view ) {};
             f( "x" );
@@ -107,6 +136,15 @@ public:
         {
             auto const f = []( url_view ) {};
             f( "x" );
+        }
+
+        // issue #756
+        {
+            url u("http://example.com");
+            auto foo = [&u](url_view uv) {
+                BOOST_TEST(uv.buffer().data() == u.buffer().data());
+            };
+            foo(u);
         }
     }
 
@@ -131,7 +169,7 @@ public:
 
         // data()
         {
-            string_view s = "/index.htm";
+            core::string_view s = "/index.htm";
             url_view u(s);
             BOOST_TEST_NE(u.data(), nullptr);
             BOOST_TEST_EQ(u.data(), s.data());
@@ -139,7 +177,7 @@ public:
 
         // string()
         {
-            string_view s = "/index.htm";
+            core::string_view s = "/index.htm";
             url_view u = parse_relative_ref(s).value();
             BOOST_TEST_EQ(u, s);
             BOOST_TEST_EQ(u.data(), s.data());
@@ -164,9 +202,9 @@ public:
         }
         }
 
-        // operator string_view()
+        // operator core::string_view()
         {
-            auto const f = []( string_view ) {};
+            auto const f = []( core::string_view ) {};
             f( url_view("x") );
         }
 
@@ -176,11 +214,11 @@ public:
     testScheme()
     {
         auto const check = [](
-            string_view s,
+            core::string_view s,
             char const* m,
             scheme id)
         {
-            result<url_view> r =
+            system::result<url_view> r =
                 parse_uri_reference(s);
             if(! BOOST_TEST(r))
                 return;
@@ -188,7 +226,7 @@ public:
             if(m)
             {
                 BOOST_TEST(u.scheme() ==
-                           string_view(m));
+                           core::string_view(m));
                 BOOST_TEST(
                     u.scheme_id() == id);
             }
@@ -201,9 +239,9 @@ public:
         };
 
         auto const bad = [](
-            string_view s)
+            core::string_view s)
         {
-            result<url_view> r =
+            system::result<url_view> r =
                 parse_uri_reference(s);
             BOOST_TEST(r.has_error());
         };
@@ -227,7 +265,7 @@ public:
     testAuthority()
     {
         auto const no =
-            [](string_view s)
+            [](core::string_view s)
         {
             BOOST_TEST_NO_THROW([s]
             {
@@ -236,7 +274,7 @@ public:
             }());
         };
         auto const yes =
-            [](string_view s, string_view m)
+            [](core::string_view s, core::string_view m)
         {
             //BOOST_TEST_NO_THROW(
             //[&]
@@ -281,7 +319,7 @@ public:
     testUserinfo()
     {
         auto const no =
-            [](string_view s)
+            [](core::string_view s)
         {
             BOOST_TEST_NO_THROW(
             [s]{
@@ -290,9 +328,9 @@ public:
             }());
         };
         auto const yes =
-            []( string_view s,
-                string_view m1,
-                string_view m2)
+            []( core::string_view s,
+                core::string_view m1,
+                core::string_view m2)
         {
             BOOST_TEST_NO_THROW(
             [&]{
@@ -591,6 +629,24 @@ public:
             BOOST_TEST(u.authority().encoded_host_and_port() ==
                 "xyz:99999");
         }
+        {
+            // zone_id
+            auto check = [](core::string_view u0, core::string_view zone_id)
+            {
+                auto ru = parse_uri(u0);
+                BOOST_TEST(ru.has_value());
+                auto const& u = *ru;
+                BOOST_TEST_EQ(u.encoded_zone_id(), zone_id);
+                pct_string_view ps{zone_id};
+                BOOST_TEST_EQ(u.zone_id(), ps.decode());
+            };
+            check("http://[fe80::1%25eth0]/", "eth0");
+            check("http://[2001:db8::1%25eth1]/index.html", "eth1");
+            check("ftp://[fe80::2%25wlan0]:8080/files/", "wlan0");
+            check("ftp://[fe80::2]:8080/files/", "");
+            check("ftp://a.com/files/", "");
+            BOOST_TEST_NOT(parse_uri("http://[fe80::1%25]/").has_value());
+        }
     }
 
     void
@@ -656,6 +712,12 @@ public:
             BOOST_TEST_EQ(u.query(), "k=");
         }
         {
+            url_view u("http://?k[]=");
+            BOOST_TEST(u.has_query());
+            BOOST_TEST_EQ(u.encoded_query(), "k[]=");
+            BOOST_TEST_EQ(u.query(), "k[]=");
+        }
+        {
             url_view u("http://?#");
             BOOST_TEST(u.has_query());
             BOOST_TEST_EQ(u.encoded_query(), "");
@@ -699,11 +761,11 @@ public:
     testFragment()
     {
         auto const check = [](
-            string_view s,
+            core::string_view s,
             char const* encoded,
-            string_view plain)
+            core::string_view plain)
         {
-            result<url_view> r =
+            system::result<url_view> r =
                 parse_uri_reference(s);
             if(! BOOST_TEST(r))
                 return;
@@ -714,7 +776,7 @@ public:
                     u.has_fragment());
                 BOOST_TEST(
                     u.encoded_fragment() ==
-                        string_view(encoded));
+                        core::string_view(encoded));
                 BOOST_TEST_EQ(
                     u.fragment(), plain);
             }
@@ -725,9 +787,9 @@ public:
             }
         };
 
-        auto const bad = [](string_view s)
+        auto const bad = [](core::string_view s)
         {
-            result<url_view> r =
+            system::result<url_view> r =
                 parse_uri_reference(s);
             BOOST_TEST(r.has_error());
         };
@@ -742,6 +804,7 @@ public:
             "#/?:@!$&'()*+,;=",
             "/?:@!$&'()*+,;=",
             "/?:@!$&'()*+,;=");
+        check("##f", "#f", "#f");
 
         bad("#%%");
 
@@ -761,7 +824,7 @@ public:
     {
         // parse_absolute_uri
         {
-            result<url_view> r;
+            system::result<url_view> r;
 
             r = parse_absolute_uri(
                 "http://user:pass@example.com:443/path/to/file.txt?q");
@@ -776,7 +839,7 @@ public:
 
         // parse_uri
         {
-            result<url_view> r;
+            system::result<url_view> r;
 
             r = parse_uri(
                 "http://user:pass@example.com:443/path/to/file.txt?q#f");
@@ -794,7 +857,7 @@ public:
 
         // parse_relative_ref
         {
-            result<url_view> r;
+            system::result<url_view> r;
 
             r = parse_relative_ref(
                 "//example.com/path/to/file.txt?q#f");
@@ -809,7 +872,7 @@ public:
 
         // parse_uri_reference
         {
-            result<url_view> r;
+            system::result<url_view> r;
 
             r = parse_uri_reference(
                 "http://user:pass@example.com:443/path/to/file.txt?q#f");
@@ -853,7 +916,7 @@ public:
     testRelativePart()
     {
         auto const ok = [](
-            string_view s)
+            core::string_view s)
         {
             BOOST_TEST_NO_THROW(
                 parse_relative_ref(s).value());
@@ -982,7 +1045,7 @@ public:
     ignore_unused(u);
         }
         {
-    result< url_view > rv = parse_uri_reference( "https://www.example.com/index.htm?text=none#a1" );
+    system::result< url_view > rv = parse_uri_reference( "https://www.example.com/index.htm?text=none#a1" );
 
     ignore_unused(rv);
         }
@@ -994,7 +1057,7 @@ public:
         ignore_unused(u);
         }
 
-        // url_view(string_view)
+        // url_view(core::string_view)
         {
         url_view u( "http://www.example.com/index.htm" );
 
@@ -1024,6 +1087,11 @@ public:
         testParseOriginForm();
 
         testJavadocs();
+
+        {
+            auto r = parse_uri("https://us%65rnam%65:password@%65xampl%65.com:8080/path/to/r%65sourc%65?qu%65ry_param=valu%65#s%65ction");
+            ignore_unused(r);
+        }
     }
 };
 

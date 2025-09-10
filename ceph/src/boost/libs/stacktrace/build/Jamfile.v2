@@ -1,13 +1,26 @@
-#  Copyright (C) 2016-2022, Antony Polukhin.
+#  Copyright (C) 2016-2024, Antony Polukhin.
 #
 # Use, modification and distribution is subject to the Boost Software License,
 # Version 1.0. (See accompanying file LICENSE_1_0.txt or copy at
 # http://www.boost.org/LICENSE_1_0.txt)
 #
 
+require-b2 5.0.1 ;
+import-search /boost/config/checks ;
+import boost-stacktrace-features ;
+import config : requires ;
+import property ;
+
+constant boost_dependencies_private :
+    <library>/boost/assert//boost_assert
+    ;
+
 project
-  : source-location .
+  : common-requirements $(boost_dependencies)
   : requirements
+    [ requires cxx11_rvalue_references ]
+    $(boost_dependencies_private)
+  : default-build
     <visibility>hidden
   ;
 
@@ -16,13 +29,12 @@ lib gcc_s ;
 lib Dbgeng ;
 lib ole32 ;
 
-
 local LIBBACKTRACE_PATH = [ modules.peek : LIBBACKTRACE_PATH ] ;
 lib backtrace
-  : 
+  :
   : <search>$(LIBBACKTRACE_PATH)/lib <link>static
   :
-  : <include>$(LIBBACKTRACE_PATH)/include 
+  : <include>$(LIBBACKTRACE_PATH)/include
   ;
 
 actions mp_simple_run_action
@@ -60,6 +72,7 @@ lib boost_stacktrace_noop
   : # default build
   : # usage-requirements
     #<link>shared:<define>BOOST_STACKTRACE_DYN_LINK=1
+    <define>BOOST_STACKTRACE_NO_LIB=1
   ;
 
 lib boost_stacktrace_backtrace
@@ -70,10 +83,11 @@ lib boost_stacktrace_backtrace
     <target-os>linux:<library>dl
     <library>backtrace
     <link>shared:<define>BOOST_STACKTRACE_DYN_LINK=1
-    [ check-target-builds ../build//libbacktrace : : <build>no ]
+    [ check-target-builds libbacktrace : : <build>no ]
   : # default build
   : # usage-requirements
     #<link>shared:<define>BOOST_STACKTRACE_DYN_LINK=1
+    <define>BOOST_STACKTRACE_NO_LIB=1
   ;
 
 lib boost_stacktrace_addr2line
@@ -83,10 +97,11 @@ lib boost_stacktrace_addr2line
     <warnings>all
     <target-os>linux:<library>dl
     <link>shared:<define>BOOST_STACKTRACE_DYN_LINK=1
-    [ check-target-builds ../build//addr2line : : <build>no ]
+    [ check-target-builds addr2line : : <build>no ]
   : # default build
   : # usage-requirements
     #<link>shared:<define>BOOST_STACKTRACE_DYN_LINK=1
+    <define>BOOST_STACKTRACE_NO_LIB=1
   ;
 
 lib boost_stacktrace_basic
@@ -96,10 +111,11 @@ lib boost_stacktrace_basic
     <warnings>all
     <target-os>linux:<library>dl
     <link>shared:<define>BOOST_STACKTRACE_DYN_LINK=1
-    [ check-target-builds ../build//WinDbg : <build>no ]
+    [ check-target-builds WinDbg : <build>no ]
   : # default build
   : # usage-requirements
     #<link>shared:<define>BOOST_STACKTRACE_DYN_LINK=1
+    <define>BOOST_STACKTRACE_NO_LIB=1
   ;
 
 lib boost_stacktrace_windbg
@@ -109,10 +125,11 @@ lib boost_stacktrace_windbg
     <warnings>all
     <library>Dbgeng <library>ole32
     <link>shared:<define>BOOST_STACKTRACE_DYN_LINK=1
-    [ check-target-builds ../build//WinDbg : : <build>no ]
+    [ check-target-builds WinDbg : : <build>no ]
   : # default build
   : # usage-requirements
     #<link>shared:<define>BOOST_STACKTRACE_DYN_LINK=1
+    <define>BOOST_STACKTRACE_NO_LIB=1
   ;
 
 lib boost_stacktrace_windbg_cached
@@ -122,10 +139,43 @@ lib boost_stacktrace_windbg_cached
     <warnings>all
     <library>Dbgeng <library>ole32
     <link>shared:<define>BOOST_STACKTRACE_DYN_LINK=1
-    [ check-target-builds ../build//WinDbgCached : : <build>no ]
+    [ check-target-builds WinDbgCached : : <build>no ]
   : # default build
   : # usage-requirements
     #<link>shared:<define>BOOST_STACKTRACE_DYN_LINK=1
+    <define>BOOST_STACKTRACE_NO_LIB=1
   ;
 
-boost-install boost_stacktrace_noop boost_stacktrace_backtrace boost_stacktrace_addr2line boost_stacktrace_basic boost_stacktrace_windbg boost_stacktrace_windbg_cached ;
+rule build-stacktrace-from-exception ( props * )
+{
+    local enabled = [ property.select <boost.stacktrace.from_exception> : $(props) ] ;
+    switch $(enabled:G=)
+    {
+        case  "on" :  return ;
+        case "off" :  return <build>no ;
+    }
+
+    local arch = [ property.select <architecture> : $(props) ] ;
+    if $(arch) && ( $(arch:G=) != x86 )
+    {
+        return <build>no ;
+    }
+}
+
+lib boost_stacktrace_from_exception
+  : # sources
+    ../src/from_exception.cpp
+  : # requirements
+    <warnings>all
+    <target-os>linux:<library>dl
+
+    # Enable build when explicitly requested, or by default, when on x86
+    <conditional>@build-stacktrace-from-exception
+
+    # Require usable libbacktrace on other platforms
+    # [ check-target-builds libbacktrace : : <build>no ]
+  : # default build
+  : # usage-requirements
+    #<link>shared:<define>BOOST_STACKTRACE_DYN_LINK=1
+    <define>BOOST_STACKTRACE_NO_LIB=1
+  ;

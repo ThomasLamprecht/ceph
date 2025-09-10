@@ -19,22 +19,27 @@
 #include "Monitor.h"
 #include "CommandHandler.h"
 
-#include "osd/OSDMap.h"
-#include "mds/FSMap.h"
-
+#include <iosfwd>
+#include <memory>
 #include <string>
-#include <ostream>
+#include <variant>
+
+class Filesystem;
+class FSMap;
+class OSDMap;
 
 class FileSystemCommandHandler : protected CommandHandler
 {
 protected:
   std::string prefix;
 
+  using fs_or_fscid = std::variant<Filesystem*, fs_cluster_id_t>;
   enum {
     POOL_METADATA,
     POOL_DATA_DEFAULT,
     POOL_DATA_EXTRA,
   };
+
   /**
    * Return 0 if the pool is suitable for use with CephFS, or
    * in case of errors return a negative error code, and populate
@@ -51,6 +56,8 @@ protected:
       bool allow_overlay = false) const;
 
   virtual std::string const &get_prefix() const {return prefix;}
+
+  int set_val(Monitor *mon, FSMap& fsmap, MonOpRequestRef op, const cmdmap_t& cmdmap, std::ostream &ss, fs_or_fscid fs, std::string var, std::string val);
 
 public:
   FileSystemCommandHandler(const std::string &prefix_)

@@ -866,13 +866,11 @@ std::unique_ptr<LuaManager> DaosStore::get_lua_manager(const DoutPrefixProvider 
   return std::make_unique<DaosLuaManager>(this, dpp, luarocks_path);
 }
 
-int DaosObject::get_obj_state(const DoutPrefixProvider* dpp,
-                              RGWObjState** _state, optional_yield y,
-                              bool follow_olh) {
+int DaosObject::load_obj_state(const DoutPrefixProvider* dpp,
+                              optional_yield y, bool follow_olh) {
   // Get object's metadata (those stored in rgw_bucket_dir_entry)
-  ldpp_dout(dpp, 20) << "DEBUG: get_obj_state" << dendl;
+  ldpp_dout(dpp, 20) << "DEBUG: load_obj_state" << dendl;
   rgw_bucket_dir_entry ent;
-  *_state = &state;  // state is required even if a failure occurs
 
   int ret = get_dir_entry_attrs(dpp, &ent);
   if (ret != 0) {
@@ -932,7 +930,7 @@ int DaosObject::get_obj_attrs(optional_yield y, const DoutPrefixProvider* dpp,
 
 int DaosObject::modify_obj_attrs(const char* attr_name, bufferlist& attr_val,
                                  optional_yield y,
-                                 const DoutPrefixProvider* dpp) {
+                                 const DoutPrefixProvider* dpp, uint32_t flags) {
   // Get object's metadata (those stored in rgw_bucket_dir_entry)
   ldpp_dout(dpp, 20) << "DEBUG: modify_obj_attrs" << dendl;
   rgw_bucket_dir_entry ent;
@@ -1025,6 +1023,19 @@ int DaosObject::transition_to_cloud(
     Bucket* bucket, rgw::sal::PlacementTier* tier, rgw_bucket_dir_entry& o,
     std::set<std::string>& cloud_targets, CephContext* cct, bool update_object,
     const DoutPrefixProvider* dpp, optional_yield y) {
+  return DAOS_NOT_IMPLEMENTED_LOG(dpp);
+}
+
+int DaosObject::restore_obj_from_cloud(Bucket* bucket,
+          rgw::sal::PlacementTier* tier,
+	  CephContext* cct,
+          RGWObjTier& tier_config,
+          uint64_t olh_epoch,
+          std::optional<uint64_t> days,
+	  bool& in_progress,
+          const DoutPrefixProvider* dpp, 
+          optional_yield y)
+{
   return DAOS_NOT_IMPLEMENTED_LOG(dpp);
 }
 
@@ -1156,7 +1167,7 @@ std::unique_ptr<Object::DeleteOp> DaosObject::get_delete_op() {
 
 DaosObject::DaosDeleteOp::DaosDeleteOp(DaosObject* _source) : source(_source) {}
 
-// Implementation of DELETE OBJ also requires DaosObject::get_obj_state()
+// Implementation of DELETE OBJ also requires DaosObject::load_obj_state()
 // to retrieve and set object's state from object's metadata.
 //
 // TODO:
@@ -1597,6 +1608,7 @@ int DaosMultipartUpload::init(const DoutPrefixProvider* dpp, optional_yield y,
 
   multipart_upload_info upload_info;
   upload_info.dest_placement = dest_placement;
+  upload_info.cksum_type = cksum_type;
 
   ent.encode(bl);
   encode(attrs, bl);
@@ -1985,6 +1997,7 @@ int DaosMultipartUpload::get_info(const DoutPrefixProvider* dpp,
 
   // Now decode the placement rule
   decode(upload_info, iter);
+  cksum_type = upload_info.cksum_type;
   placement = upload_info.dest_placement;
   *rule = &placement;
 
@@ -2302,6 +2315,18 @@ int DaosStore::cluster_stat(RGWClusterStat& stats) {
 }
 
 std::unique_ptr<Lifecycle> DaosStore::get_lifecycle(void) {
+  DAOS_NOT_IMPLEMENTED_LOG(nullptr);
+  return 0;
+}
+
+std::unique_ptr<Restore> DaosStore::get_restore(const int n_objs,
+				const std::vector<std::string_view>& obj_names) {
+  DAOS_NOT_IMPLEMENTED_LOG(nullptr);
+  return 0;
+}
+
+bool DaosStore::process_expired_objects(const DoutPrefixProvider *dpp,
+	       				optional_yield y) {
   DAOS_NOT_IMPLEMENTED_LOG(nullptr);
   return 0;
 }

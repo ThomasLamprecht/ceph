@@ -28,10 +28,12 @@
 #include <seastar/core/sleep.hh>
 #include <seastar/core/thread.hh>
 #include <seastar/core/print.hh>
+#include <seastar/util/assert.hh>
 #include <seastar/util/defer.hh>
 #include <seastar/util/closeable.hh>
 #include <seastar/util/later.hh>
 #include <mutex>
+#include <ranges>
 
 using namespace seastar;
 using namespace std::chrono_literals;
@@ -49,7 +51,7 @@ struct async_service : public seastar::async_sharded_service<async_service> {
         });
     }
     virtual void check() {
-        assert(!deleted);
+        SEASTAR_ASSERT(!deleted);
     }
     future<> stop() { return make_ready_future<>(); }
 };
@@ -345,13 +347,13 @@ SEASTAR_TEST_CASE(test_smp_service_groups) {
         shard_id other_shard = smp::count - 1;
         remote_worker rm1(1);
         remote_worker rm2(1000);
-        auto bunch1 = parallel_for_each(boost::irange(0, 20), [&] (int ignore) { return rm1.do_remote_work(other_shard, ssg1); });
-        auto bunch2 = parallel_for_each(boost::irange(0, 2000), [&] (int ignore) { return rm2.do_remote_work(other_shard, ssg2); });
+        auto bunch1 = parallel_for_each(std::views::iota(0, 20), [&] (int ignore) { return rm1.do_remote_work(other_shard, ssg1); });
+        auto bunch2 = parallel_for_each(std::views::iota(0, 2000), [&] (int ignore) { return rm2.do_remote_work(other_shard, ssg2); });
         bunch1.get();
         bunch2.get();
         if (smp::count > 1) {
-            assert(rm1.max_concurrent_observed == 1);
-            assert(rm2.max_concurrent_observed == 1000);
+            SEASTAR_ASSERT(rm1.max_concurrent_observed == 1);
+            SEASTAR_ASSERT(rm2.max_concurrent_observed == 1000);
         }
         destroy_smp_service_group(ssg1).get();
         destroy_smp_service_group(ssg2).get();

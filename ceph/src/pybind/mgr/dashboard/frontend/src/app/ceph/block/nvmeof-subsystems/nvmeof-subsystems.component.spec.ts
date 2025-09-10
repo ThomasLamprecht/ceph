@@ -11,6 +11,8 @@ import { TaskWrapperService } from '~/app/shared/services/task-wrapper.service';
 import { NvmeofSubsystemsComponent } from './nvmeof-subsystems.component';
 import { NvmeofTabsComponent } from '../nvmeof-tabs/nvmeof-tabs.component';
 import { NvmeofSubsystemsDetailsComponent } from '../nvmeof-subsystems-details/nvmeof-subsystems-details.component';
+import { ComboBoxModule, GridModule } from 'carbon-components-angular';
+import { CephServiceSpec } from '~/app/shared/models/service.interface';
 
 const mockSubsystems = [
   {
@@ -26,9 +28,48 @@ const mockSubsystems = [
   }
 ];
 
+const mockGroups = [
+  [
+    {
+      service_name: 'nvmeof.rbd.default',
+      service_type: 'nvmeof',
+      unmanaged: false,
+      spec: {
+        group: 'default'
+      }
+    },
+    {
+      service_name: 'nvmeof.rbd.foo',
+      service_type: 'nvmeof',
+      unmanaged: false,
+      spec: {
+        group: 'foo'
+      }
+    }
+  ],
+  2
+];
+
+const mockformattedGwGroups = [
+  {
+    content: 'default'
+  },
+  {
+    content: 'foo'
+  }
+];
+
 class MockNvmeOfService {
   listSubsystems() {
     return of(mockSubsystems);
+  }
+
+  formatGwGroupsList(_data: CephServiceSpec[][]) {
+    return mockformattedGwGroups;
+  }
+
+  listGatewayGroups() {
+    return of(mockGroups);
   }
 }
 
@@ -53,7 +94,7 @@ describe('NvmeofSubsystemsComponent', () => {
         NvmeofTabsComponent,
         NvmeofSubsystemsDetailsComponent
       ],
-      imports: [HttpClientModule, RouterTestingModule, SharedModule],
+      imports: [HttpClientModule, RouterTestingModule, SharedModule, ComboBoxModule, GridModule],
       providers: [
         { provide: NvmeofService, useClass: MockNvmeOfService },
         { provide: AuthStorageService, useClass: MockAuthStorageService },
@@ -77,4 +118,12 @@ describe('NvmeofSubsystemsComponent', () => {
     tick();
     expect(component.subsystems).toEqual(mockSubsystems);
   }));
+
+  it('should load gateway groups correctly', () => {
+    expect(component.gwGroups.length).toBe(2);
+  });
+
+  it('should set first group as default initially', () => {
+    expect(component.group).toBe(mockGroups[0][0].spec.group);
+  });
 });

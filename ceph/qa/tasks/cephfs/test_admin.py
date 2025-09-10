@@ -165,11 +165,24 @@ class TestAdminCommands(CephFSTestCase):
         if overwrites:
             self.run_ceph_cmd('osd', 'pool', 'set', n+"-data", 'allow_ec_overwrites', 'true')
 
-    def gen_health_warn_mds_cache_oversized(self):
+    def gen_health_warn_mds_cache_oversized(self, mds_id=None, fs=None):
         health_warn = 'MDS_CACHE_OVERSIZED'
 
-        self.config_set('mds', 'mds_cache_memory_limit', '1K')
-        self.config_set('mds', 'mds_health_cache_threshold', '1.00000')
+        # cs_name = config section name
+        cs_name = None   # declaring here in case no if/elif condition is true
+        if mds_id and not fs:
+            cs_name = f'mds.{mds_id}'
+        elif not mds_id and fs:
+            mds_id = self.fs.get_active_names()[0]
+            cs_name = f'mds.{mds_id}'
+        elif not mds_id and not fs:
+            cs_name = 'mds'
+        elif mds_id and fs:
+            raise RuntimeError('Makes no sense to pass both, mds_id as well as '
+                               'FS object')
+
+        self.config_set(cs_name, 'mds_cache_memory_limit', '1K')
+        self.config_set(cs_name, 'mds_health_cache_threshold', '1.00000')
         self.mount_a.open_n_background('.', 400)
 
         self.wait_for_health(health_warn, 30)
@@ -324,6 +337,8 @@ class TestFsStatus(TestAdminCommands):
     Test "ceph fs status subcommand.
     """
 
+    MDSS_REQUIRED = 3
+
     def test_fs_status(self):
         """
         That `ceph fs status` command functions.
@@ -337,6 +352,31 @@ class TestFsStatus(TestAdminCommands):
 
         mdsmap = json.loads(self.get_ceph_cmd_stdout("fs", "status", "--format=json"))["mdsmap"]
         self.assertEqual(mdsmap[0]["state"], "active")
+
+    def test_fs_status_standby_replay(self):
+        """
+        That `ceph fs status` command functions.
+        """
+
+        self.fs.set_allow_standby_replay(True)
+
+        s = self.get_ceph_cmd_stdout("fs", "status")
+        self.assertTrue("active" in s)
+        self.assertTrue("standby-replay" in s)
+        self.assertTrue("0-s" in s)
+        self.assertTrue("standby" in s)
+
+        mdsmap = json.loads(self.get_ceph_cmd_stdout("fs", "status", "--format=json-pretty"))["mdsmap"]
+        self.assertEqual(mdsmap[0]["state"], "active")
+        self.assertEqual(mdsmap[1]["state"], "standby-replay")
+        self.assertEqual(mdsmap[1]["rank"], "0-s")
+        self.assertEqual(mdsmap[2]["state"], "standby")
+
+        mdsmap = json.loads(self.get_ceph_cmd_stdout("fs", "status", "--format=json"))["mdsmap"]
+        self.assertEqual(mdsmap[0]["state"], "active")
+        self.assertEqual(mdsmap[1]["state"], "standby-replay")
+        self.assertEqual(mdsmap[1]["rank"], "0-s")
+        self.assertEqual(mdsmap[2]["state"], "standby")
 
 
 class TestAddDataPool(TestAdminCommands):
@@ -1643,6 +1683,47 @@ class TestFsAuthorize(CephFSTestCase):
         self.captester.conduct_neg_test_for_chown_caps()
         self.captester.conduct_neg_test_for_truncate_caps()
 
+    def test_multifs_single_path_rootsquash(self):
+        """
+        Test root_squash with multi fs
+        """
+        self.skipTest('this test is broken ATM, see: '
+                      'https://tracker.ceph.com/issues/66076.')
+
+        self.fs1 = self.fs
+        self.fs2 = self.mds_cluster.newfs('testcephfs2')
+        self.mount_b.remount(cephfs_name=self.fs2.name)
+        self.captester1 = CapTester(self.mount_a)
+        self.captester2 = CapTester(self.mount_b)
+
+        PERM = 'rw'
+        FS_AUTH_CAPS = (('/', PERM, 'root_squash'),)
+
+        self.fs1.authorize(self.client_id, FS_AUTH_CAPS)
+        self.fs2.authorize(self.client_id, FS_AUTH_CAPS)
+        keyring = self.fs.mon_manager.get_keyring(self.client_id)
+
+        keyring_path = self.mount_a.client_remote.mktemp(data=keyring)
+        self.mount_a.remount(client_id=self.client_id,
+                             client_keyring_path=keyring_path)
+        # testing MDS caps...
+        # Since root_squash is set in client caps, client can read but not
+        # write even though access level is set to "rw" on both fses
+        self.captester1.conduct_pos_test_for_read_caps()
+        self.captester1.conduct_pos_test_for_open_caps()
+        self.captester1.conduct_neg_test_for_write_caps(sudo_write=True)
+        self.captester1.conduct_neg_test_for_chown_caps()
+        self.captester1.conduct_neg_test_for_truncate_caps()
+
+        keyring_path = self.mount_b.client_remote.mktemp(data=keyring)
+        self.mount_b.remount(client_id=self.client_id,
+                             client_keyring_path=keyring_path)
+        self.captester2.conduct_pos_test_for_read_caps()
+        self.captester2.conduct_pos_test_for_open_caps()
+        self.captester2.conduct_neg_test_for_write_caps(sudo_write=True)
+        self.captester2.conduct_neg_test_for_chown_caps()
+        self.captester2.conduct_neg_test_for_truncate_caps()
+
     def test_multifs_rootsquash_nofeature(self):
         """
         That having root_squash on one fs doesn't prevent access to others.
@@ -1788,6 +1869,28 @@ class TestFsAuthorize(CephFSTestCase):
 
         self._remount(keyring)
         self.captester.run_mds_cap_tests(PERM)
+
+    def test_fs_read_and_single_path_rw(self):
+        """
+        Tests the file creation using 'touch' cmd on a specific path
+        which has 'rw' caps and 'r' caps on the rest of the fs.
+
+        The mds auth caps with 'rw' caps on a specific path and 'r' caps
+        on the rest of the fs has an issue. The file creation using 'touch'
+        cmd on the fuse client used to fail while doing setattr.
+        Please see https://tracker.ceph.com/issues/67212
+
+        The new file creation test using 'touch' cmd is added to
+        'MdsCapTester.run_mds_cap_tests' which eventually gets
+        called by '_remount_and_run_tests'
+        """
+        FS_AUTH_CAPS = (('/', 'r'), ('/dir2', 'rw'))
+        self.mount_a.run_shell('mkdir -p ./dir2')
+        self.captesters = (CapTester(self.mount_a, '/'),
+                           CapTester(self.mount_a, '/dir2'))
+        keyring = self.fs.authorize(self.client_id, FS_AUTH_CAPS)
+
+        self._remount_and_run_tests(FS_AUTH_CAPS, keyring)
 
     def test_multiple_path_r(self):
         PERM = 'r'
@@ -2451,7 +2554,7 @@ class TestPermErrMsg(CephFSTestCase):
 class TestFSFail(TestAdminCommands):
 
     MDSS_REQUIRED = 2
-    CLIENTS_REQUIRED = 1
+    CLIENTS_REQUIRED = 2
 
     def test_with_health_warn_cache_oversized(self):
         '''
@@ -2512,11 +2615,53 @@ class TestFSFail(TestAdminCommands):
         self.fs.set_joinable()
         self.fs.wait_for_daemons()
 
+    def test_when_other_FS_has_warn_TRIM(self):
+        '''
+        Test that "fs fail" runs successfully for an FS when a MDS which is
+        active for a different FS has health warning MDS_TRIM.
+        '''
+        self.fs1 = self.fs
+
+        self.fs2 = self.fs.newfs(name='cephfs2', create=True)
+        self.mount_b.remount(fsname=self.fs2.name)
+        self.mount_b.wait_until_mounted()
+
+        # generates health warning for self.fs1
+        self.gen_health_warn_mds_trim()
+
+        # actual testing begins now.
+        self.run_ceph_cmd(f'fs fail {self.fs2.name}')
+
+        # Bring and wait for MDS to be up since it is needed for unmounting
+        # of CephFS in CephFSTestCase.tearDown() to be successful.
+        self.fs.set_joinable()
+        self.fs.wait_for_daemons()
+
+    def test_when_other_FS_has_warn_CACHE_OVERSIZED(self):
+        '''
+        Test that "fs fail" runs successfully for an FS when a MDS which is
+        active for a different FS) has health warning MDS_CACHE_OVERSIZED.
+        '''
+        self.fs1 = self.fs
+
+        self.fs2 = self.fs.newfs(name='cephfs2', create=True)
+        self.mount_b.remount(fsname=self.fs2.name)
+        self.mount_b.wait_until_mounted()
+
+        # actual testing begins now.
+        self.gen_health_warn_mds_cache_oversized(fs=self.fs1)
+        self.run_ceph_cmd(f'fs fail {self.fs2.name}')
+
+        # Bring and wait for MDS to be up since it is needed for unmounting
+        # of CephFS in CephFSTestCase.tearDown() to be successful.
+        self.fs.set_joinable()
+        self.fs.wait_for_daemons()
+
 
 class TestMDSFail(TestAdminCommands):
 
     MDSS_REQUIRED = 2
-    CLIENTS_REQUIRED = 1
+    CLIENTS_REQUIRED = 2
 
     def test_with_health_warn_cache_oversized(self):
         '''
@@ -2593,6 +2738,108 @@ class TestMDSFail(TestAdminCommands):
                               errmsgs=health_warn)
         self.run_ceph_cmd(f'mds fail {mds1_id} --yes-i-really-mean-it')
         self.run_ceph_cmd(f'mds fail {mds2_id} --yes-i-really-mean-it')
+
+    def test_when_other_MDS_has_warn_TRIM(self):
+        '''
+        Test that "mds fail" runs successfully for a MDS when a MDS which is
+        active for a different FS has health warning MDS_TRIM.
+        '''
+        self.fs1 = self.fs
+
+        self.fs2 = self.fs.newfs(name='cephfs2', create=True)
+        self.mount_b.remount(fsname=self.fs2.name)
+        self.mount_b.wait_until_mounted()
+
+        # generates health warning for self.fs1
+        self.gen_health_warn_mds_trim()
+
+        active_mds_id = self.fs2.get_active_names()[0]
+        # actual testing begins now.
+        self.run_ceph_cmd(f'mds fail {active_mds_id}')
+
+        # Bring and wait for MDS to be up since it is needed for unmounting
+        # of CephFS in CephFSTestCase.tearDown() to be successful.
+        self.fs.set_joinable()
+        self.fs.wait_for_daemons()
+
+    def test_when_other_MDS_has_warn_CACHE_OVERSIZED(self):
+        '''
+        Test that "mds fail" runs successfully for a MDS when a MDS which is
+        active for a different FS has health warning MDS_CACHE_OVERSIZED.
+        '''
+        self.fs1 = self.fs
+
+        self.fs2 = self.fs.newfs(name='cephfs2', create=True)
+        self.mount_b.remount(fsname=self.fs2.name)
+        self.mount_b.wait_until_mounted()
+
+        # actual testing begins now.
+        mds_id_for_fs1 = self.fs1.get_active_names()[0]
+        self.gen_health_warn_mds_cache_oversized(mds_id=mds_id_for_fs1)
+        mds_id_for_fs2 = self.fs2.get_active_names()[0]
+        self.run_ceph_cmd(f'mds fail {mds_id_for_fs2}')
+
+        # Bring and wait for MDS to be up since it is needed for unmounting
+        # of CephFS in CephFSTestCase.tearDown() to be successful.
+        self.fs.set_joinable()
+        self.fs.wait_for_daemons()
+
+
+class TestFSSetMaxMDS(TestAdminCommands):
+
+    def test_when_unhealthy_without_confirm(self):
+        '''
+        Test that command "ceph fs set <fsname> max_mds <num>" without the
+        confirmation flag (--yes-i-really-mean-it) fails when cluster is
+        unhealthy.
+        '''
+        self.gen_health_warn_mds_cache_oversized()
+
+        with self.assertRaises(CommandFailedError) as cfe:
+            self.fs.set_max_mds(2, confirm=False)
+        self.assertEqual(cfe.exception.exitstatus, errno.EPERM)
+
+    def test_when_unhealthy_with_confirm(self):
+        '''
+        Test that command "ceph fs set <fsname> max_mds <num>
+        --yes-i-really-mean-it" runs successfully when cluster is unhealthy.
+        '''
+        self.gen_health_warn_mds_cache_oversized()
+
+        self.fs.set_max_mds(2, confirm=True)
+        self.assertEqual(self.fs.get_var('max_mds'), 2)
+
+    def test_when_mds_trim_without_confirm(self):
+        '''
+        Test that command "ceph fs set <fsname> max_mds <num>" without the
+        confirmation flag (--yes-i-really-mean-it) fails when cluster has
+        MDS_TRIM health warning.
+        '''
+        self.gen_health_warn_mds_trim()
+
+        with self.assertRaises(CommandFailedError) as cfe:
+            self.fs.set_max_mds(2, confirm=False)
+        self.assertEqual(cfe.exception.exitstatus, errno.EPERM)
+
+    def test_when_mds_trim_when_with_confirm(self):
+        '''
+        Test that command "ceph fs set <fsname> max_mds <num>
+        --yes-i-really-mean-it" runs successfully when cluster has MDS_TRIM
+        health warning.
+        '''
+        self.gen_health_warn_mds_trim()
+
+        self.fs.set_max_mds(2, confirm=True)
+        self.assertEqual(self.fs.get_var('max_mds'), 2)
+
+    def test_when_healthy_with_confirm(self):
+        '''
+        Test that command "ceph fs set <fsname> max_mds <num>
+        --yes-i-really-mean-it" runs successfully also when cluster is
+        healthy.
+        '''
+        self.fs.set_max_mds(2, confirm=True)
+        self.assertEqual(self.fs.get_var('max_mds'), 2)
 
 
 class TestToggleVolumes(CephFSTestCase):

@@ -50,7 +50,9 @@ automatically.
 When using Filestore, the journal size should be at least twice the product of the expected drive
 speed multiplied by ``filestore_max_sync_interval``. However, the most common
 practice is to partition the journal drive (often an SSD), and mount it such
-that Ceph uses the entire partition for the journal.
+that Ceph uses the entire partition for the journal. Note that Filestore has been
+deprecated for several releases and any legacy Filestore OSDs should be migrated
+to BlueStore.
 
 .. confval:: osd_uuid
 .. confval:: osd_data
@@ -151,7 +153,7 @@ generates a catalog of all objects in each placement group and compares each
 primary object to its replicas, ensuring that no objects are missing or
 mismatched. Light scrubbing checks the object size and attributes, and is
 usually done daily. Deep scrubbing reads the data and uses checksums to ensure
-data integrity, and is usually done weekly. The freqeuncies of both light
+data integrity, and is usually done weekly. The frequencies of both light
 scrubbing and deep scrubbing are determined by the cluster's configuration,
 which is fully under your control and subject to the settings explained below
 in this section.

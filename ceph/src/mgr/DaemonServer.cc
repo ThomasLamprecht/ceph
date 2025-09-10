@@ -12,8 +12,9 @@
  */
 
 #include "DaemonServer.h"
-#include <boost/algorithm/string.hpp>
-#include "mgr/Mgr.h"
+#include "DaemonState.h"
+#include "Mgr.h"
+#include "MgrSession.h"
 
 #include "include/stringify.h"
 #include "include/str_list.h"
@@ -25,7 +26,9 @@
 #include "mgr/OSDPerfMetricCollector.h"
 #include "mgr/MDSPerfMetricCollector.h"
 #include "mgr/MgrOpRequest.h"
+#include "mon/MonClient.h"
 #include "mon/MonCommand.h"
+#include "msg/Messenger.h"
 
 #include "messages/MMgrOpen.h"
 #include "messages/MMgrUpdate.h"
@@ -41,6 +44,12 @@
 #include "messages/MOSDForceRecovery.h"
 #include "common/errno.h"
 #include "common/pick_address.h"
+#include "common/TextTable.h"
+#include "crush/CrushWrapper.h"
+
+#include <boost/algorithm/string.hpp>
+
+#include <iomanip>
 
 #include <list>
 #include <map>
@@ -53,6 +62,7 @@
 #define dout_prefix *_dout << "mgr.server " << __func__ << " "
 
 using namespace TOPNSPC::common;
+using namespace std::literals;
 
 using std::list;
 using std::ostream;
@@ -2773,7 +2783,9 @@ void DaemonServer::send_report()
 void DaemonServer::adjust_pgs()
 {
   dout(20) << dendl;
-  unsigned max = std::max<int64_t>(1, g_conf()->mon_osd_max_creating_pgs);
+  uint64_t max = std::max<uint64_t>(
+    1,
+    g_conf().get_val<uint64_t>("mgr_max_pg_creating"));
   double max_misplaced = g_conf().get_val<double>("target_max_misplaced_ratio");
   bool aggro = g_conf().get_val<bool>("mgr_debug_aggressive_pg_num_changes");
 
@@ -2984,7 +2996,7 @@ void DaemonServer::adjust_pgs()
 		     << " pgp_num_target " << p.get_pgp_num_target()
 		     << " pgp_num " << p.get_pgp_num()
 		     << " - misplaced_ratio " << misplaced_ratio
-		     << " > max " << max_misplaced
+		     << " > max_misplaced " << max_misplaced
 		     << ", deferring pgp_num update" << dendl;
 	  } else {
 	    // NOTE: this calculation assumes objects are
@@ -3171,15 +3183,12 @@ void DaemonServer::got_mgr_map()
   daemon_state.cull("mgr", have);
 }
 
-const char** DaemonServer::get_tracked_conf_keys() const
+std::vector<std::string> DaemonServer::get_tracked_keys() const noexcept
 {
-  static const char *KEYS[] = {
-    "mgr_stats_threshold",
-    "mgr_stats_period",
-    nullptr
+  return {
+    "mgr_stats_threshold"s,
+    "mgr_stats_period"s
   };
-
-  return KEYS;
 }
 
 void DaemonServer::handle_conf_change(const ConfigProxy& conf,

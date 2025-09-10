@@ -145,7 +145,7 @@ class when_all_state : public when_all_state_base {
     // We only schedule one continuation at a time, and store it in _cont.
     // This way, if while the future we wait for completes, some other futures
     // also complete, we won't need to schedule continuations for them.
-    std::aligned_union_t<1, when_all_state_component<Futures>...> _cont;
+    alignas(when_all_state_component<Futures>...) std::byte _cont[std::max({sizeof(when_all_state_component<Futures>)...})];
     when_all_process_element _processors[nr];
 public:
     typename ResolvedTupleTransform::promise_type p;
@@ -286,9 +286,9 @@ complete_when_all(std::vector<Future>&& futures, typename std::vector<Future>::i
     });
 }
 
-template<typename ResolvedVectorTransform, typename FutureIterator>
+template<typename ResolvedVectorTransform, typename FutureIterator, typename Sentinel>
 inline auto
-do_when_all(FutureIterator begin, FutureIterator end) noexcept {
+do_when_all(FutureIterator begin, Sentinel end) noexcept {
     using itraits = std::iterator_traits<FutureIterator>;
     auto make_values_vector = [] (size_t size) noexcept {
         memory::scoped_critical_alloc_section _;
@@ -297,10 +297,10 @@ do_when_all(FutureIterator begin, FutureIterator end) noexcept {
         return ret;
     };
     std::vector<typename itraits::value_type> ret =
-            make_values_vector(iterator_range_estimate_vector_capacity(begin, end, typename itraits::iterator_category()));
+            make_values_vector(iterator_range_estimate_vector_capacity(begin, end));
     // Important to invoke the *begin here, in case it's a function iterator,
     // so we launch all computation in parallel.
-    std::move(begin, end, std::back_inserter(ret));
+    std::ranges::move(begin, end, std::back_inserter(ret));
     return complete_when_all<ResolvedVectorTransform>(std::move(ret), ret.begin());
 }
 
@@ -508,14 +508,14 @@ inline auto when_all_succeed(FutOrFuncs&&... fut_or_funcs) noexcept {
 /// \param end an \c InputIterator designating the end of the range of futures
 /// \return an \c std::vector<> of all the valus in the input
 SEASTAR_MODULE_EXPORT
-template <typename FutureIterator, typename = typename std::iterator_traits<FutureIterator>::value_type>
+template <typename FutureIterator, typename Sentinel, typename = typename std::iterator_traits<FutureIterator>::value_type>
 requires requires (FutureIterator i) {
      *i++;
      { i != i } -> std::convertible_to<bool>;
      requires is_future<std::remove_reference_t<decltype(*i)>>::value;
 }
 inline auto
-when_all_succeed(FutureIterator begin, FutureIterator end) noexcept {
+when_all_succeed(FutureIterator begin, Sentinel end) noexcept {
     using itraits = std::iterator_traits<FutureIterator>;
     using result_transform = internal::extract_values_from_futures_vector<typename itraits::value_type>;
     try {

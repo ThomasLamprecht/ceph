@@ -503,6 +503,11 @@ void dump_time(req_state *s, const char *name, real_time t)
   s->formatter->dump_string(name, buf);
 }
 
+void dump_time_exact_seconds(req_state *s, const char *name, real_time t)
+{
+  dump_time(s, name, std::chrono::time_point_cast<std::chrono::seconds>(t));
+}
+
 void dump_owner(req_state *s, const std::string& id, const string& name,
 		const char *section)
 {
@@ -1671,7 +1676,6 @@ int RGWDeleteMultiObj_ObjStore::get_params(optional_yield y)
   return op_ret;
 }
 
-
 void RGWRESTOp::send_response()
 {
   if (!flusher.did_start()) {
@@ -2171,6 +2175,11 @@ int RGWREST::preprocess(req_state *s, rgw::io::BasicClient* cio)
       << " s->info.domain=" << s->info.domain
       << " s->info.request_uri=" << s->info.request_uri
       << dendl;
+  } else if (s3website_enabled && api_priority_s3website > api_priority_s3) {
+    // If the Host header is missing, but the s3website API is enabled and has
+    // a higher priority than the regular S3 API, then we should still treat
+    // the request as a website request.
+    s->prot_flags |= RGW_REST_WEBSITE;
   }
 
   if (s->info.domain.empty()) {

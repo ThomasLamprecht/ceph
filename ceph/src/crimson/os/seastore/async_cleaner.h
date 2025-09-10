@@ -17,6 +17,7 @@
 #include "crimson/os/seastore/randomblock_manager_group.h"
 #include "crimson/os/seastore/transaction.h"
 #include "crimson/os/seastore/segment_seq_allocator.h"
+#include "crimson/os/seastore/backref_mapping.h"
 
 namespace crimson::os::seastore {
 
@@ -43,6 +44,7 @@ struct segment_info_t {
 
   sea_time_point modify_time = NULL_TIME;
 
+  // Might be unavailable(0), see mount() -> init_modify_time()
   std::size_t num_extents = 0;
 
   segment_off_t written_to = 0;
@@ -74,6 +76,13 @@ struct segment_info_t {
   void set_empty();
 
   void set_closed();
+
+  void init_modify_time(sea_time_point _modify_time) {
+    ceph_assert(modify_time == NULL_TIME);
+    ceph_assert(num_extents == 0);
+    ceph_assert(_modify_time != NULL_TIME);
+    modify_time = _modify_time;
+  }
 
   void update_modify_time(sea_time_point _modify_time, std::size_t _num_extents) {
     ceph_assert(!is_closed());
@@ -226,6 +235,15 @@ public:
 
   void update_written_to(segment_type_t, paddr_t);
 
+  void init_modify_time(
+      segment_id_t id, sea_time_point tp) {
+    if (tp == NULL_TIME) {
+      return;
+    }
+
+    segments[id].init_modify_time(tp);
+  }
+
   void update_modify_time(
       segment_id_t id, sea_time_point tp, std::size_t num) {
     if (num == 0) {
@@ -282,24 +300,29 @@ public:
   /// Creates empty transaction
   /// weak transaction should be type READ
   virtual TransactionRef create_transaction(
-      Transaction::src_t, const char *name, bool is_weak=false) = 0;
+    Transaction::src_t,
+    const char *name,
+    cache_hint_t cache_hint = CACHE_HINT_TOUCH,
+    bool is_weak=false) = 0;
 
   /// Creates empty transaction with interruptible context
   template <typename Func>
   auto with_transaction_intr(
       Transaction::src_t src,
       const char* name,
+      cache_hint_t cache_hint,
       Func &&f) {
     return do_with_transaction_intr<Func, false>(
-        src, name, std::forward<Func>(f));
+        src, name, cache_hint, std::forward<Func>(f));
   }
 
   template <typename Func>
   auto with_transaction_weak(
       const char* name,
+      cache_hint_t cache_hint,
       Func &&f) {
     return do_with_transaction_intr<Func, true>(
-        Transaction::src_t::READ, name, std::forward<Func>(f)
+        Transaction::src_t::READ, name, cache_hint, std::forward<Func>(f)
     ).handle_error(
       crimson::ct_error::eagain::assert_failure{"unexpected eagain"},
       crimson::ct_error::pass_further_all{}
@@ -333,12 +356,12 @@ public:
     sea_time_point modify_time) = 0;
 
   /**
-   * get_extent_if_live
+   * get_extents_if_live
    *
    * Returns extent at specified location if still referenced by
    * lba_manager and not removed by t.
    *
-   * See TransactionManager::get_extent_if_live and
+   * See TransactionManager::get_extents_if_live and
    * LBAManager::get_physical_extent_if_live.
    */
   using get_extents_if_live_iertr = base_iertr;
@@ -368,9 +391,10 @@ private:
   auto do_with_transaction_intr(
       Transaction::src_t src,
       const char* name,
+      cache_hint_t cache_hint,
       Func &&f) {
     return seastar::do_with(
-      create_transaction(src, name, IsWeak),
+      create_transaction(src, name, cache_hint, IsWeak),
       [f=std::forward<Func>(f)](auto &ref_t) mutable {
         return with_trans_intr(
           *ref_t,
@@ -1463,7 +1487,7 @@ private:
   using do_reclaim_space_ret = do_reclaim_space_ertr::future<>;
   do_reclaim_space_ret do_reclaim_space(
     const std::vector<CachedExtentRef> &backref_extents,
-    const backref_pin_list_t &pin_list,
+    const backref_mapping_list_t &pin_list,
     std::size_t &reclaimed,
     std::size_t &runs);
 

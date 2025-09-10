@@ -235,7 +235,7 @@ a host out of maintenance mode:
 .. prompt:: bash #
 
    ceph orch host maintenance enter <hostname> [--force] [--yes-i-really-mean-it]
-   ceph orch host maintenance exit <hostname>
+   ceph orch host maintenance exit <hostname> [--force] [--offline]
 
 * Adding the ``--force`` flag to the ``enter`` command allows the user to bypass
   warnings (but not alerts). 

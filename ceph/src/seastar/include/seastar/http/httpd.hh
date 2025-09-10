@@ -31,8 +31,6 @@
 #include <seastar/http/request.hh>
 #include <seastar/core/seastar.hh>
 #include <seastar/core/sstring.hh>
-#include <seastar/core/app-template.hh>
-#include <seastar/core/circular_buffer.hh>
 #include <seastar/core/distributed.hh>
 #include <seastar/core/queue.hh>
 #include <seastar/core/gate.hh>
@@ -84,7 +82,7 @@ class connection : public boost::intrusive::list_base_hook<> {
     const bool _tls;
 public:
     [[deprecated("use connection(http_server&, connected_socket&&, bool tls)")]]
-    connection(http_server& server, connected_socket&& fd, socket_address, bool tls) 
+    connection(http_server& server, connected_socket&& fd, socket_address, bool tls)
             : connection(server, std::move(fd), tls) {}
     connection(http_server& server, connected_socket&& fd, bool tls)
             : _server(server)
@@ -103,7 +101,7 @@ public:
             , _read_buf(_fd.input())
             , _write_buf(_fd.output())
             , _client_addr(std::move(client_addr))
-            , _server_addr(std::move(server_addr)) 
+            , _server_addr(std::move(server_addr))
             , _tls(tls) {
         on_new_connection();
     }

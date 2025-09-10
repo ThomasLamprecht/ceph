@@ -1,10 +1,16 @@
 #include <seastar/rpc/rpc.hh>
+#include <seastar/rpc/multi_algo_compressor_factory.hh>
 #include <seastar/core/align.hh>
 #include <seastar/core/seastar.hh>
 #include <seastar/core/print.hh>
 #include <seastar/core/future-util.hh>
 #include <seastar/core/metrics.hh>
+#include <seastar/util/assert.hh>
 #include <boost/range/adaptor/map.hpp>
+#include <boost/range/adaptor/transformed.hpp>
+#include <boost/algorithm/string.hpp>
+#include <boost/range/numeric.hpp>
+#include <fmt/ostream.h>
 
 #if FMT_VERSION >= 90000
 template <> struct fmt::formatter<seastar::rpc::streaming_domain_type> : fmt::ostream_formatter {};
@@ -47,7 +53,7 @@ namespace rpc {
           std::vector<temporary_buffer<char>> v;
           v.reserve(align_up(size_t(size), chunk_size) / chunk_size);
           while (size_) {
-              v.push_back(temporary_buffer<char>(std::min(chunk_size, size_)));
+              v.emplace_back(std::min(chunk_size, size_));
               size_ -= v.back().size();
           }
           bufs = std::move(v);
@@ -84,7 +90,7 @@ namespace rpc {
           newbufs.reserve(orgbufs.size());
           deleter d = make_object_deleter(std::move(org));
           for (auto&& b : orgbufs) {
-              newbufs.push_back(temporary_buffer<char>(b.get_write(), b.size(), d.share()));
+              newbufs.emplace_back(b.get_write(), b.size(), d.share());
           }
           buf.bufs = std::move(newbufs);
       }
@@ -234,7 +240,7 @@ namespace rpc {
   }
 
   void connection::withdraw(outgoing_entry::container_t::iterator it, std::exception_ptr ex) {
-      assert(it != _outgoing_queue.end());
+      SEASTAR_ASSERT(it != _outgoing_queue.end());
 
       auto pit = std::prev(it);
       // Previous entry's (pit's) done future will schedule current entry (it)
@@ -435,7 +441,7 @@ namespace rpc {
           if (!size) {
               return make_ready_future<typename FrameType::return_type>(FrameType::make_value(h, rcv_buf()));
           } else {
-              return read_rcv_buf(in, size).then([this, info, h = std::move(h), size=size] (rcv_buf rb) {
+              return read_rcv_buf(in, size).then([this, info, h = std::move(h), size] (rcv_buf rb) {
                   if (rb.size != size) {
                       _logger(info, format("unexpected eof on a {} while reading data: expected {:d} got {:d}", FrameType::role(), size, rb.size));
                       return make_ready_future<typename FrameType::return_type>(FrameType::empty_value());
@@ -568,7 +574,7 @@ namespace rpc {
               }
           });
           if (eof && !bufs.empty()) {
-              assert(_stream_queue.empty());
+              SEASTAR_ASSERT(_stream_queue.empty());
               _stream_queue.push(rcv_buf(-1U)); // push eof marker back for next read to notice it
           }
       });
@@ -811,7 +817,7 @@ namespace rpc {
   void client::abort_all_streams() {
       while (!_streams.empty()) {
           auto&& s = _streams.begin();
-          assert(s->second->get_owner_shard() == this_shard_id()); // abort can be called only locally
+          SEASTAR_ASSERT(s->second->get_owner_shard() == this_shard_id()); // abort can be called only locally
           s->second->get()->abort();
           _streams.erase(s);
       }
@@ -1017,8 +1023,10 @@ namespace rpc {
                   }
               }
           }
+          if (is_stream() && (ep || _error)) {
+              _stream_queue.abort(std::make_exception_ptr(stream_closed()));
+          }
           _error = true;
-          _stream_queue.abort(std::make_exception_ptr(stream_closed()));
           return stop_send_loop(ep).then_wrapped([this] (future<> f) {
               f.ignore_ready_future();
               _outstanding.clear();
@@ -1239,8 +1247,10 @@ future<> server::connection::send_unknown_verb_reply(std::optional<rpc_clock_typ
                       format("server{} connection dropped", is_stream() ? " stream" : "").c_str(), ep);
           }
           _fd.shutdown_input();
+          if (is_stream() && (ep || _error)) {
+              _stream_queue.abort(std::make_exception_ptr(stream_closed()));
+          }
           _error = true;
-          _stream_queue.abort(std::make_exception_ptr(stream_closed()));
           return stop_send_loop(ep).then_wrapped([this] (future<> f) {
               f.ignore_ready_future();
               get_server()._conns.erase(get_connection_id());
@@ -1333,14 +1343,14 @@ future<> server::connection::send_unknown_verb_reply(std::optional<rpc_clock_typ
                       connection_id::make_invalid_id(_next_client_id++);
               auto conn = _proto.make_server_connection(*this, std::move(fd), std::move(addr), id);
               auto r = _conns.emplace(id, conn);
-              assert(r.second);
+              SEASTAR_ASSERT(r.second);
               // Process asynchronously in background.
               (void)conn->process();
           });
       }).then_wrapped([this] (future<>&& f){
           try {
               f.get();
-              assert(false);
+              SEASTAR_ASSERT(false);
           } catch (...) {
               _ss_stopped.set_value();
           }
@@ -1399,6 +1409,36 @@ future<> server::connection::send_unknown_verb_reply(std::optional<rpc_clock_typ
   isolation_config default_isolate_connection(sstring isolation_cookie) {
       return isolation_config{};
   }
+
+multi_algo_compressor_factory::multi_algo_compressor_factory(std::vector<const rpc::compressor::factory*> factories)
+        : _factories(std::move(factories)) {
+    _features =  boost::algorithm::join(_factories | boost::adaptors::transformed(std::mem_fn(&rpc::compressor::factory::supported)), sstring(","));
+}
+
+std::unique_ptr<compressor>
+multi_algo_compressor_factory::negotiate(sstring feature, bool is_server, std::function<future<>()> send_empty_frame) const {
+    std::vector<sstring> names;
+    boost::split(names, feature, boost::is_any_of(","));
+    std::unique_ptr<compressor> c;
+    if (is_server) {
+        for (auto&& n : names) {
+            for (auto&& f : _factories) {
+                if ((c = f->negotiate(n, is_server, send_empty_frame))) {
+                    return c;
+                }
+            }
+        }
+    } else {
+        for (auto&& f : _factories) {
+            for (auto&& n : names) {
+                if ((c = f->negotiate(n, is_server, send_empty_frame))) {
+                    return c;
+                }
+            }
+        }
+    }
+    return nullptr;
+}
 
 }
 

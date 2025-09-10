@@ -1,6 +1,6 @@
 add_library(compressor_objs OBJECT Compressor.cc)
 add_dependencies(compressor_objs common-objs)
-add_dependencies(compressor_objs legacy-option-headers)
+target_link_libraries(compressor_objs legacy-option-headers)
 
 if(HAVE_QATZIP AND HAVE_QAT)
   add_library(qat_compressor OBJECT QatAccel.cc)
@@ -8,7 +8,17 @@ if(HAVE_QATZIP AND HAVE_QAT)
                         QAT::qat
                         QAT::usdm
                         QAT::zip
+                        legacy-option-headers
                        )
+endif()
+
+if (HAVE_UADK)
+  add_library(uadk_compressor OBJECT UadkAccel.cc)
+  target_link_libraries(uadk_compressor PUBLIC
+	                uadk::uadk
+			uadk::uadkwd
+			uadk::uadkzip
+			numa)
 endif()
 
 ## compressor plugins

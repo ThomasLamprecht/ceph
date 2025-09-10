@@ -38,7 +38,7 @@ describe('Multisite page', () => {
 
     it('should delete policy', () => {
       multisite.navigateTo();
-      multisite.delete('test');
+      multisite.delete('test', null, null, true, true);
     });
   });
 
@@ -100,6 +100,33 @@ describe('Multisite page', () => {
 
     it('should delete pipe', () => {
       multisite.deletePipe('new-pipe');
+    });
+  });
+
+  describe('Multi-site topology viewer', () => {
+    it('should show topology viewer', () => {
+      multisite.navigateTo('topology');
+      multisite.topologyViewerExist();
+    });
+
+    describe('Multisite replication wizard', () => {
+      beforeEach(() => {
+        multisite.navigateTo('wizard');
+      });
+
+      it('should show replication wizard', () => {
+        multisite.replicationWizardExist();
+      });
+
+      it('should verify the wizard is properly loaded', () => {
+        multisite.replicationWizardExist();
+        // // Verify first step
+        multisite.verifyWizardContents('CreateRealmZonegroup');
+        // Verify second step
+        multisite.verifyWizardContents('CreateZone');
+        // Verify the review
+        multisite.verifyWizardContents('Review');
+      });
     });
   });
 });

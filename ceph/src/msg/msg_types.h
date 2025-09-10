@@ -15,7 +15,10 @@
 #ifndef CEPH_MSG_TYPES_H
 #define CEPH_MSG_TYPES_H
 
+#include <algorithm> // for std::min()
+#include <set>
 #include <sstream>
+#include <string>
 
 #include <netinet/in.h>
 #include "common/fmt_common.h"
@@ -97,6 +100,15 @@ public:
     denc(v._num, p);
   }
   void dump(ceph::Formatter *f) const;
+
+  template <typename FormatContext>
+  auto fmt_print_ctx(FormatContext& ctx) const {
+    if (is_new() || _num < 0) {
+      return fmt::format_to(ctx.out(), "{}.?", type_str());
+    } else {
+      return fmt::format_to(ctx.out(), "{}.{}",type_str(), _num);
+    }
+  }
 
   static void generate_test_instances(std::list<entity_name_t*>& o);
 };

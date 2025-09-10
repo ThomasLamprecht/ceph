@@ -34,13 +34,9 @@ module;
 #include <algorithm>
 
 #include <fmt/core.h>
-#if FMT_VERSION >= 60000
 #include <fmt/chrono.h>
 #include <fmt/color.h>
 #include <fmt/ostream.h>
-#elif FMT_VERSION >= 50000
-#include <fmt/time.h>
-#endif
 #include <boost/any.hpp>
 #include <boost/lexical_cast.hpp>
 #include <boost/program_options.hpp>
@@ -54,7 +50,6 @@ module;
 module seastar;
 #else
 #include <seastar/util/log.hh>
-#include <seastar/core/smp.hh>
 #include <seastar/util/log-cli.hh>
 
 #include <seastar/core/array_map.hh>
@@ -101,7 +96,6 @@ template <> struct formatter<wrapped_log_level> {
         };
         int index = static_cast<int>(wll.level);
         std::string_view name = text[index];
-#if FMT_VERSION >= 60000
         static seastar::array_map<text_style, nr_levels> style = {
             { int(log_level::debug), fg(terminal_color::green)  },
             { int(log_level::info),  fg(terminal_color::white)  },
@@ -113,7 +107,6 @@ template <> struct formatter<wrapped_log_level> {
             return fmt::format_to(ctx.out(), "{}",
                 fmt::format(style[index], "{}", name));
         }
-#endif
         return fmt::format_to(ctx.out(), "{}", name);
     }
 };
@@ -129,6 +122,11 @@ auto formatter<seastar::log_level>::format(seastar::log_level level, format_cont
 namespace seastar {
 
 namespace internal {
+
+[[noreturn]] void assert_fail(const char* msg, const char* file, int line, const char* func) {
+    printf("%s:%u: %s: Assertion `%s` failed.\n", file, line, func, msg);
+    __builtin_trap();
+}
 
 void log_buf::free_buffer() noexcept {
     if (_own_buf) {
@@ -159,7 +157,7 @@ void log_buf::realloc_buffer_and_append(char c) noexcept {
     _alloc_failure = true;
     std::string_view msg = "(log buffer allocation failure)";
     auto can_copy = std::min(msg.size(), size_t(_current - _begin));
-    std::memcpy(_current - can_copy, msg.begin(), can_copy);
+    std::memcpy(_current - can_copy, msg.data(), can_copy);
   }
 }
 
@@ -635,18 +633,6 @@ logging_settings extract_settings(const options& opts) {
     };
 }
 
-}
-
-}
-namespace boost {
-template<>
-seastar::log_level lexical_cast(const std::string& source) {
-    std::istringstream in(source);
-    seastar::log_level level;
-    if (!(in >> level)) {
-        throw boost::bad_lexical_cast();
-    }
-    return level;
 }
 
 }

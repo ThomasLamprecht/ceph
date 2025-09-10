@@ -1038,8 +1038,7 @@ public:
             s2.at(1) = 'B';
             BOOST_TEST(s2.at(1) == 'B');
 
-            BOOST_TEST_THROWS(s1.at(s2.size()),
-                std::out_of_range);
+            BOOST_TEST_THROWS_WITH_LOCATION( s1.at(s2.size()) );
         }
 
         // at(size_type) const
@@ -1047,8 +1046,38 @@ public:
             BOOST_TEST(cs1.at(1) == 'b');
             BOOST_TEST(cs2.at(1) == 'B');
 
-            BOOST_TEST_THROWS(cs1.at(cs2.size()),
-                std::out_of_range);
+            BOOST_TEST_THROWS_WITH_LOCATION( cs1.at(cs2.size()) );
+        }
+
+        // try_at(size_type)
+        {
+            s1 = t.v1;
+            s2 = t.v2;
+            BOOST_TEST( *s1.try_at(1) == 'b' );
+            *s1.try_at(1) = '*';
+            BOOST_TEST( *s1.try_at(1) == '*' );
+            *s1.try_at(1) = 'b';
+            BOOST_TEST( *s1.try_at(1) == 'b' );
+
+            BOOST_TEST( *s2.try_at(1) == 'B' );
+            *s2.try_at(1) = '*';
+            BOOST_TEST( *s2.try_at(1) == '*' );
+            *s2.try_at(1) = 'B';
+            BOOST_TEST( *s2.try_at(1) == 'B' );
+
+            system::error_code const ec = s1.try_at(s2.size()).error();
+            BOOST_TEST( ec == error::out_of_range );
+            BOOST_TEST( ec.has_location() );
+        }
+
+        // try_at(size_type) const
+        {
+            BOOST_TEST( *cs1.try_at(1) == 'b' );
+            BOOST_TEST( *cs2.try_at(1) == 'B' );
+
+            system::error_code const ec = s1.try_at(s2.size()).error();
+            BOOST_TEST( ec == error::out_of_range );
+            BOOST_TEST( ec.has_location() );
         }
 
         // operator[&](size_type)
@@ -1391,17 +1420,15 @@ public:
             // pos out of range
             {
                 string s(t.v1);
-                BOOST_TEST_THROWS(
-                    (s.insert(s.size() + 2, 1, '*')),
-                    std::out_of_range);
+                BOOST_TEST_THROWS_WITH_LOCATION(
+                    (s.insert(s.size() + 2, 1, '*')) );
             }
 
             // size > max_size
             {
                 string s(t.v1);
-                BOOST_TEST_THROWS(
-                    (s.insert(1, s.max_size(), 'a')),
-                    std::length_error);
+                BOOST_TEST_THROWS_WITH_LOCATION(
+                    s.insert(1, s.max_size(), 'a') );
             }
         }
 
@@ -1426,9 +1453,8 @@ public:
             // pos out of range
             {
                 string s(t.v1);
-                BOOST_TEST_THROWS(
-                    (s.insert(s.size() + 2, "*")),
-                    std::out_of_range);
+                BOOST_TEST_THROWS_WITH_LOCATION(
+                    (s.insert(s.size() + 2, "*")));
             }
         }
 
@@ -1648,9 +1674,8 @@ public:
             // pos out of range
             {
                 string s(t.v1);
-                BOOST_TEST_THROWS(
-                    (s.insert(s.size() + 2, "*")),
-                    std::out_of_range);
+                BOOST_TEST_THROWS_WITH_LOCATION(
+                    (s.insert(s.size() + 2, "*")));
             }
         }
 
@@ -1757,9 +1782,8 @@ public:
 
             {
                 string s(t.v1);
-                BOOST_TEST_THROWS(
-                    (s.erase(t.v1.size() + 1, 1)),
-                    std::out_of_range);
+                BOOST_TEST_THROWS_WITH_LOCATION(
+                    (s.erase(t.v1.size() + 1, 1)));
             }
         }
 
@@ -2175,8 +2199,8 @@ public:
             fail_loop([&](storage_ptr const& sp)
             {
                 string s(t.v2, sp);
-                BOOST_TEST_THROWS(s.replace(s.size() + 1, 1, t.v2),
-                    std::out_of_range);
+                BOOST_TEST_THROWS_WITH_LOCATION(
+                    s.replace(s.size() + 1, 1, t.v2));
             });
 
             // outside, shrink
@@ -2398,8 +2422,8 @@ public:
             fail_loop([&](storage_ptr const& sp)
             {
                 string s(t.v2, sp);
-                BOOST_TEST_THROWS(s.replace(s.size() + 1, 1, 1, 'a'),
-                    std::out_of_range);
+                BOOST_TEST_THROWS_WITH_LOCATION(
+                    s.replace(s.size() + 1, 1, 1, 'a'));
             });
         }
 

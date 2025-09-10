@@ -13,7 +13,9 @@
 #include "common/debug.h"
 #include "common/errno.h"
 #include "common/perf_counters.h"
+#include "common/perf_counters_collection.h"
 #include "common/perf_counters_key.h"
+#include "include/stringify.h"
 #include "FSMirror.h"
 #include "PeerReplayer.h"
 #include "Utils.h"
@@ -442,7 +444,8 @@ int PeerReplayer::try_lock_directory(const std::string &dir_root,
            << dendl;
     }
 
-    if (ceph_close(m_remote_mount, fd) < 0) {
+    r = ceph_close(m_remote_mount, fd);
+    if (r < 0) {
       derr << ": failed to close (cleanup) remote dir_root=" << dir_root << ": "
            << cpp_strerror(r) << dendl;
     }
@@ -2118,7 +2121,7 @@ void PeerReplayer::peer_status(Formatter *f) {
       f->dump_string("state", "idle");
     } else {
       f->dump_string("state", "syncing");
-      f->open_object_section("current_sycning_snap");
+      f->open_object_section("current_syncing_snap");
       f->dump_unsigned("id", (*sync_stat.current_syncing_snap).first);
       f->dump_string("name", (*sync_stat.current_syncing_snap).second);
       f->close_section();

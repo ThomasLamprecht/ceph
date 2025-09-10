@@ -28,61 +28,12 @@ public:
     static constexpr std::size_t max_static_buffer =
         sizeof(beast::detail::temporary_buffer);
 
-    template<class T>
-    class test_allocator
-    {
-    public:
-        using value_type = T;
-
-        test_allocator() noexcept(false) {}
-
-        template<class U, class = typename
-            std::enable_if<!std::is_same<test_allocator, U>::value>::type>
-        test_allocator(test_allocator<U> const&) noexcept {}
-
-        value_type*
-        allocate(std::size_t n)
-        {
-            return static_cast<value_type*>(::operator new (n*sizeof(value_type)));
-        }
-
-        void
-        deallocate(value_type* p, std::size_t) noexcept
-        {
-            ::operator delete(p);
-        }
-
-        template<class U>
-        friend
-        bool
-        operator==(test_allocator<T> const&, test_allocator<U> const&) noexcept
-        {
-            return true;
-        }
-
-        template<class U>
-        friend
-        bool
-        operator!=(test_allocator<T> const& x, test_allocator<U> const& y) noexcept
-        {
-            return !(x == y);
-        }
-    };
-
-    using test_fields = basic_fields<test_allocator<char>>;
-
     BOOST_STATIC_ASSERT(is_fields<fields>::value);
-    BOOST_STATIC_ASSERT(is_fields<test_fields>::value);
 
     // std::allocator is noexcept movable, fields should satisfy
     // these constraints as well.
     BOOST_STATIC_ASSERT(std::is_nothrow_move_constructible<fields>::value);
     BOOST_STATIC_ASSERT(std::is_nothrow_move_assignable<fields>::value);
-
-    // Check if basic_fields respects throw-constructibility and
-    // propagate_on_container_move_assignment of the allocator.
-    BOOST_STATIC_ASSERT(std::is_nothrow_move_constructible<test_fields>::value);
-    BOOST_STATIC_ASSERT(!std::is_nothrow_move_assignable<test_fields>::value);
 
     template<class Allocator>
     using fa_t = basic_fields<Allocator>;
@@ -493,6 +444,33 @@ public:
             BEAST_EXPECT(std::next(rng.first, 0)->value() == "2");
             BEAST_EXPECT(std::next(rng.first, 1)->value() == "4");
             BEAST_EXPECT(std::next(rng.first, 2)->value() == "6");
+        }
+
+        // max field name and max field value
+        {
+            fields f;
+            error_code ec;
+            auto fit_name  = std::string(fields::max_name_size,      'a');
+            auto big_name  = std::string(fields::max_name_size + 1,  'a');
+            auto fit_value = std::string(fields::max_value_size,     'a');
+            auto big_value = std::string(fields::max_value_size + 1, 'a');
+
+            f.insert(fit_name, fit_value);
+            f.set(fit_name, fit_value);
+
+            f.insert(field::age, big_name, "", ec);
+            BEAST_EXPECT(ec == error::header_field_name_too_large);
+            f.insert(field::age, "", big_value, ec);
+            BEAST_EXPECT(ec == error::header_field_value_too_large);
+
+            BEAST_THROWS(f.insert(field::age, big_value),     boost::system::system_error);
+            BEAST_THROWS(f.insert(field::age, big_name, ""),  boost::system::system_error);
+            BEAST_THROWS(f.insert(field::age, "", big_value), boost::system::system_error);
+            BEAST_THROWS(f.insert(big_name, ""),              boost::system::system_error);
+            BEAST_THROWS(f.insert("", big_value),             boost::system::system_error);
+            BEAST_THROWS(f.set(field::age, big_value),        boost::system::system_error);
+            BEAST_THROWS(f.set(big_name, ""),                 boost::system::system_error);
+            BEAST_THROWS(f.set("", big_value),                boost::system::system_error);
         }
     }
 
@@ -1072,6 +1050,72 @@ public:
         BOOST_STATIC_ASSERT(( insert_test<string_view, const char(&)[10]>::value));
     }
 
+    template<class T>
+    class throwing_allocator
+    {
+    public:
+        using value_type = T;
+
+        throwing_allocator() noexcept(false) {}
+
+        throwing_allocator(throwing_allocator const&) noexcept(false) {}
+        throwing_allocator(throwing_allocator&&) noexcept(false) {}
+
+        throwing_allocator& operator=(throwing_allocator const&) noexcept(false) { return *this; }
+        throwing_allocator& operator=(throwing_allocator&&) noexcept(false) { return *this; }
+
+        template<class U, class = typename
+            std::enable_if<!std::is_same<throwing_allocator, U>::value>::type>
+        throwing_allocator(throwing_allocator<U> const&) noexcept(false) {}
+
+        value_type*
+        allocate(std::size_t n)
+        {
+            return static_cast<value_type*>(::operator new (n*sizeof(value_type)));
+        }
+
+        void
+        deallocate(value_type* p, std::size_t) noexcept
+        {
+            ::operator delete(p);
+        }
+
+        template<class U>
+        friend
+        bool
+        operator==(throwing_allocator<T> const&, throwing_allocator<U> const&) noexcept
+        {
+            return true;
+        }
+
+        template<class U>
+        friend
+        bool
+        operator!=(throwing_allocator<T> const& x, throwing_allocator<U> const& y) noexcept
+        {
+            return !(x == y);
+        }
+    };
+
+    void
+    testIssue2517()
+    {
+        using test_fields = basic_fields<throwing_allocator<char>>;
+        BOOST_STATIC_ASSERT(is_fields<test_fields>::value);
+
+        // Check if basic_fields respects throw-constructibility and
+        // propagate_on_container_move_assignment of the allocator.
+        BOOST_STATIC_ASSERT(std::is_nothrow_move_constructible<test_fields>::value);
+        BOOST_STATIC_ASSERT(!std::is_nothrow_move_assignable<test_fields>::value);
+
+        test_fields f1;
+        f1.insert("1", "1");
+        test_fields f2;
+        f2 = std::move(f1);
+        BEAST_EXPECT(f1.begin() == f1.end());
+        BEAST_EXPECT(f2["1"] == "1");
+    }
+
     void
     testEmpty()
     {
@@ -1103,6 +1147,7 @@ public:
 
         testIssue1828();
         boost::ignore_unused(&fields_test::testIssue2085);
+        testIssue2517();
         testEmpty();
     }
 };

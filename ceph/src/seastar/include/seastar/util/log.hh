@@ -35,7 +35,6 @@
 #include <atomic>
 #include <mutex>
 #include <type_traits>
-#include <boost/lexical_cast.hpp>
 #include <fmt/core.h>
 #include <fmt/format.h>
 #endif
@@ -71,14 +70,6 @@ struct fmt::formatter<seastar::log_level> {
     constexpr auto parse(format_parse_context& ctx) { return ctx.begin(); }
     auto format(seastar::log_level level, fmt::format_context& ctx) const -> decltype(ctx.out());
 };
-
-// Boost doesn't auto-deduce the existence of the streaming operators for some reason
-
-namespace boost {
-template<>
-seastar::log_level lexical_cast(const std::string& source);
-
-}
 
 namespace seastar {
 SEASTAR_MODULE_EXPORT_BEGIN
@@ -295,7 +286,7 @@ public:
         if (is_enabled(level)) {
             try {
                 lambda_log_writer writer([&] (internal::log_buf::inserter_iterator it) {
-#if defined(SEASTAR_LOGGER_COMPILE_TIME_FMT) || FMT_VERSION < 80000
+#ifdef SEASTAR_LOGGER_COMPILE_TIME_FMT
                     return fmt::format_to(it, fmt.format, std::forward<Args>(args)...);
 #else
                     return fmt::format_to(it, fmt::runtime(fmt.format), std::forward<Args>(args)...);
@@ -330,11 +321,7 @@ public:
                     if (rl.has_dropped_messages()) {
                         it = fmt::format_to(it, "(rate limiting dropped {} similar messages) ", rl.get_and_reset_dropped_messages());
                     }
-#if FMT_VERSION >= 80000
                     return fmt::format_to(it, fmt::runtime(fmt.format), std::forward<Args>(args)...);
-#else
-                    return fmt::format_to(it, fmt.format, std::forward<Args>(args)...);
-#endif
                 });
                 do_log(level, writer);
             } catch (...) {

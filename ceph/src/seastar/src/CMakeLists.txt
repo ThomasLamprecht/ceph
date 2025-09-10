@@ -34,6 +34,7 @@ target_sources (seastar-module
     core/sharded.cc
     core/scollectd.cc
     core/semaphore.cc
+    core/signal.cc
     core/smp.cc
     core/sstring.cc
     core/systemwide_memory_barrier.cc
@@ -126,10 +127,6 @@ target_link_libraries (seastar-module
     yaml-cpp::yaml-cpp
     "$<BUILD_INTERFACE:Valgrind::valgrind>"
     Threads::Threads)
-if (Seastar_NUMA)
-  target_link_libraries (seastar-module
-    PRIVATE numactl::numactl)
-endif ()
 if (Seastar_HWLOC)
   target_link_libraries (seastar-module
     PRIVATE hwloc::hwloc)

@@ -33,6 +33,7 @@
 #endif
 #include <seastar/core/future.hh>
 #include <seastar/core/task.hh>
+#include <seastar/util/assert.hh>
 #include <seastar/util/bool_class.hh>
 #include <seastar/util/modules.hh>
 #include <seastar/core/semaphore.hh>
@@ -381,15 +382,15 @@ future<> keep_doing(AsyncAction action) noexcept {
 }
 
 namespace internal {
-template <typename Iterator, typename AsyncAction>
+template <typename Iterator, class Sentinel, typename AsyncAction>
 class do_for_each_state final : public continuation_base<> {
     Iterator _begin;
-    Iterator _end;
+    Sentinel _end;
     AsyncAction _action;
     promise<> _pr;
 
 public:
-    do_for_each_state(Iterator begin, Iterator end, AsyncAction action, future<>&& first_unavailable)
+    do_for_each_state(Iterator begin, Sentinel end, AsyncAction action, future<>&& first_unavailable)
         : _begin(std::move(begin)), _end(std::move(end)), _action(std::move(action)) {
         internal::set_callback(std::move(first_unavailable), this);
     }
@@ -422,16 +423,16 @@ public:
     }
 };
 
-template<typename Iterator, typename AsyncAction>
+template<typename Iterator, typename Sentinel, typename AsyncAction>
 inline
-future<> do_for_each_impl(Iterator begin, Iterator end, AsyncAction action) {
+future<> do_for_each_impl(Iterator begin, Sentinel end, AsyncAction action) {
     while (begin != end) {
         auto f = futurize_invoke(action, *begin++);
         if (f.failed()) {
             return f;
         }
         if (!f.available() || need_preempt()) {
-            auto* s = new internal::do_for_each_state<Iterator, AsyncAction>{
+            auto* s = new internal::do_for_each_state<Iterator, Sentinel, AsyncAction>{
                 std::move(begin), std::move(end), std::move(action), std::move(f)};
             return s->get_future();
         }
@@ -454,12 +455,15 @@ future<> do_for_each_impl(Iterator begin, Iterator end, AsyncAction action) {
 ///               when it is acceptable to process the next item.
 /// \return a ready future on success, or the first failed future if
 ///         \c action failed.
-template<typename Iterator, typename AsyncAction>
-requires requires (Iterator i, AsyncAction aa) {
-    { futurize_invoke(aa, *i) } -> std::same_as<future<>>;
-}
+template<typename Iterator, typename Sentinel, typename AsyncAction>
+requires (
+    requires (Iterator i, AsyncAction aa) {
+        { futurize_invoke(aa, *i) } -> std::same_as<future<>>;
+    } &&
+    (std::same_as<Sentinel, Iterator> || std::sentinel_for<Sentinel, Iterator>)
+)
 inline
-future<> do_for_each(Iterator begin, Iterator end, AsyncAction action) noexcept {
+future<> do_for_each(Iterator begin, Sentinel end, AsyncAction action) noexcept {
     try {
         return internal::do_for_each_impl(std::move(begin), std::move(end), std::move(action));
     } catch (...) {
@@ -472,19 +476,19 @@ future<> do_for_each(Iterator begin, Iterator end, AsyncAction action) noexcept 
 /// For each item in a range, call a function, waiting for the previous
 /// invocation to complete before calling the next one.
 ///
-/// \param c an \c Container object designating input range
+/// \param c an \c Range object designating input range
 /// \param action a callable, taking a reference to objects from the range
 ///               as a parameter, and returning a \c future<> that resolves
 ///               when it is acceptable to process the next item.
 /// \return a ready future on success, or the first failed future if
 ///         \c action failed.
-template<typename Container, typename AsyncAction>
-requires requires (Container c, AsyncAction aa) {
+template<typename Range, typename AsyncAction>
+requires requires (Range c, AsyncAction aa) {
     { futurize_invoke(aa, *std::begin(c)) } -> std::same_as<future<>>;
     std::end(c);
 }
 inline
-future<> do_for_each(Container& c, AsyncAction action) noexcept {
+future<> do_for_each(Range& c, AsyncAction action) noexcept {
     try {
         return internal::do_for_each_impl(std::begin(c), std::end(c), std::move(action));
     } catch (...) {
@@ -500,17 +504,20 @@ struct has_iterator_category : std::false_type {};
 template <typename T>
 struct has_iterator_category<T, std::void_t<typename std::iterator_traits<T>::iterator_category >> : std::true_type {};
 
-template <typename Iterator, typename Sentinel, typename IteratorCategory>
+template <typename Iterator, typename Sentinel>
 inline
 size_t
-iterator_range_estimate_vector_capacity(Iterator begin, Sentinel end, IteratorCategory) {
-    // May be linear time below random_access_iterator_tag, but still better than reallocation
-    if constexpr (std::is_base_of_v<std::forward_iterator_tag, IteratorCategory>) {
-        return std::distance(begin, end);
+iterator_range_estimate_vector_capacity(Iterator begin, Sentinel end) {
+    if constexpr (std::forward_iterator<Iterator> &&
+                  std::forward_iterator<Sentinel>) {
+        return std::ranges::distance(begin, end);
+    } else if constexpr (std::random_access_iterator<Iterator> &&
+                         std::random_access_iterator<Sentinel>) {
+        return std::ranges::distance(begin, end);
+    } else {
+        // For InputIterators we can't estimate needed capacity
+        return 0;
     }
-
-    // For InputIterators we can't estimate needed capacity
-    return 0;
 }
 
 } // namespace internal
@@ -574,12 +581,11 @@ parallel_for_each(Iterator begin, Sentinel end, Func&& func) noexcept {
         memory::scoped_critical_alloc_section _;
         if (!f.available() || f.failed()) {
             if (!s) {
-                using itraits = std::iterator_traits<Iterator>;
                 size_t n{0U};
                 if constexpr (internal::has_iterator_category<Iterator>::value) {
                     // We need if-constexpr here because there exist iterators for which std::iterator_traits
                     // does not have 'iterator_category' as member type
-                    n = (internal::iterator_range_estimate_vector_capacity(begin, end, typename itraits::iterator_category{}) + 1);
+                    n = (internal::iterator_range_estimate_vector_capacity(begin, end) + 1);
                 }
                 s = new parallel_for_each_state(n);
             }
@@ -687,7 +693,7 @@ max_concurrent_for_each(Iterator begin, Sentinel end, size_t max_concurrent, Fun
         { }
     };
 
-    assert(max_concurrent > 0);
+    SEASTAR_ASSERT(max_concurrent > 0);
 
     try {
         return do_with(state(std::move(begin), std::move(end), max_concurrent, std::forward<Func>(func)), [] (state& s) {

@@ -24,6 +24,7 @@
 
 #include "common/perf_counters.h"
 #include "common/PriorityCache.h"
+#include "common/strtol.h"
 #include "include/common_fwd.h"
 #include "include/scope_guard.h"
 #include "include/str_list.h"
@@ -33,6 +34,12 @@
 #include "RocksDBStore.h"
 
 #include "common/debug.h"
+
+#ifdef WITH_CRIMSON
+#include "crimson/common/perf_counters_collection.h"
+#else
+#include "common/perf_counters_collection.h"
+#endif
 
 #define dout_context cct
 #define dout_subsys ceph_subsys_rocksdb
@@ -1396,6 +1403,13 @@ bool RocksDBStore::get_property(
 int64_t RocksDBStore::estimate_prefix_size(const string& prefix,
 					   const string& key_prefix)
 {
+  // The default mode is to derive estimates based on
+  // sst files alone (INCLUDE_FILES).
+  // This gives an irritating result when a batch of keys is
+  // just commited but estimate keeps showing 0.
+  rocksdb::DB::SizeApproximationFlags flags(
+    rocksdb::DB::SizeApproximationFlags::INCLUDE_FILES |
+    rocksdb::DB::SizeApproximationFlags::INCLUDE_MEMTABLES);
   uint64_t size = 0;
   auto p_iter = cf_handles.find(prefix);
   if (p_iter != cf_handles.end()) {
@@ -1404,14 +1418,14 @@ int64_t RocksDBStore::estimate_prefix_size(const string& prefix,
       string start = key_prefix + string(1, '\x00');
       string limit = key_prefix + string("\xff\xff\xff\xff");
       rocksdb::Range r(start, limit);
-      db->GetApproximateSizes(cf, &r, 1, &s);
+      db->GetApproximateSizes(cf, &r, 1, &s, flags);
       size += s;
     }
   } else {
     string start = combine_strings(prefix , key_prefix);
     string limit = combine_strings(prefix , key_prefix + "\xff\xff\xff\xff");
     rocksdb::Range r(start, limit);
-    db->GetApproximateSizes(default_cf, &r, 1, &size);
+    db->GetApproximateSizes(default_cf, &r, 1, &size, flags);
   }
   return size;
 }
@@ -1419,25 +1433,43 @@ int64_t RocksDBStore::estimate_prefix_size(const string& prefix,
 void RocksDBStore::get_statistics(Formatter *f)
 {
   if (!cct->_conf->rocksdb_perf)  {
-    dout(20) << __func__ << " RocksDB perf is disabled, can't probe for stats"
-	     << dendl;
+    f->write_raw_data("error: RocksDB perf is disabled, can't probe for stats.\n");
     return;
   }
-
+  if (!cct->_conf->rocksdb_collect_compaction_stats &&
+      !cct->_conf->rocksdb_collect_extended_stats &&
+      !cct->_conf->rocksdb_collect_memory_stats)  {
+    f->write_raw_data("error: None of rocksdb_collect_* setting is enabled, hence no output.\n");
+    return;
+  }
+  
   if (cct->_conf->rocksdb_collect_compaction_stats) {
-    std::string stat_str;
-    bool status = db->GetProperty("rocksdb.stats", &stat_str);
-    if (status) {
-      f->open_object_section("rocksdb_statistics");
+    vector<rocksdb::ColumnFamilyHandle*> handles;
+    handles.push_back(default_cf);
+    for (auto cf : cf_handles) {
+      for (auto shard_cf : cf.second.handles) {
+        handles.push_back(shard_cf);
+      }
+    }
+    f->open_object_section("rocksdb_statistics");
+    for (auto handle : handles) {
+      std::string stat_str;
+      bool status = db->GetProperty(handle, "rocksdb.stats", &stat_str);
+      if (!status) {
+        derr << __func__ << " failed to get rocksdb.stats for the cf: " 
+             << handle->GetName() << dendl;
+        continue;
+      } 
       f->dump_string("rocksdb_compaction_statistics", "");
       vector<string> stats;
       split_stats(stat_str, '\n', stats);
       for (auto st :stats) {
         f->dump_string("", st);
-      }
-      f->close_section();
+      }  
     }
+    f->close_section();
   }
+
   if (cct->_conf->rocksdb_collect_extended_stats) {
     if (dbstats) {
       f->open_object_section("rocksdb_extended_statistics");
@@ -1451,7 +1483,7 @@ void RocksDBStore::get_statistics(Formatter *f)
       f->close_section();
     }
     f->open_object_section("rocksdbstore_perf_counters");
-    logger->dump_formatted(f, false, false);
+    logger->dump_formatted(f, false, select_labeled_t::unlabeled);
     f->close_section();
   }
   if (cct->_conf->rocksdb_collect_memory_stats) {

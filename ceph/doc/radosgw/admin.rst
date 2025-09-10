@@ -262,6 +262,7 @@ include:
 - ``--secret-key=<key>`` manually specifies a S3 secret key or a Swift secret key.
 - ``--gen-access-key`` automatically generates a random S3 access key.
 - ``--gen-secret`` automatically generates a random S3 secret key or a random Swift secret key.
+- ``--generate-key`` create user with or without credentials. If sets to false, then user cannot set ``gen-secret/gen-access-key/access-key/secret-key``
 
 Adding S3 keys
 ~~~~~~~~~~~~~~
@@ -763,8 +764,8 @@ The following is the general form of commands that set rate limit parameters:
 .. prompt:: bash #
 
    radosgw-admin ratelimit set --ratelimit-scope=bucket --bucket=<bucket> \
-                                <[--max-read-ops=<num ops>] [--max-read-bytes=<num bytes>] \
-                                [--max-write-ops=<num ops>] [--max-write-bytes=<num bytes>]>
+                                 <[--max-read-ops=<num ops>] [--max-read-bytes=<num bytes>] \
+                                 [--max-write-ops=<num ops>] [--max-write-bytes=<num bytes>]>
 
 An example of using ``radosgw-admin ratelimit set`` to set a rate limit for a
 bucket might look like this: 

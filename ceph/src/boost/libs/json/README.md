@@ -1,6 +1,6 @@
-[![Boost.JSON](https://raw.githubusercontent.com/CPPAlliance/json/master/doc/images/repo-logo-3.png)](http://master.json.cpp.al/)
+[![Boost.JSON](https://raw.githubusercontent.com/CPPAlliance/json/master/doc/images/repo-logo-3.png)](https://www.boost.org/doc/libs/release/libs/json)
 
-Branch          | [`master`](https://github.com/CPPAlliance/json/tree/master) | [`develop`](https://github.com/CPPAlliance/json/tree/develop) |
+Branch          | [`master`](https://github.com/boostorg/json/tree/master) | [`develop`](https://github.com/boostorg/json/tree/develop) |
 --------------- | ----------------------------------------------------------- | ------------------------------------------------------------- |
 [Azure](https://azure.microsoft.com/en-us/services/devops/pipelines/) | [![Build Status](https://img.shields.io/azure-devops/build/vinniefalco/2571d415-8cc8-4120-a762-c03a8eda0659/8/master)](https://vinniefalco.visualstudio.com/json/_build/latest?definitionId=5&branchName=master) | [![Build Status](https://img.shields.io/azure-devops/build/vinniefalco/2571d415-8cc8-4120-a762-c03a8eda0659/8/develop)](https://vinniefalco.visualstudio.com/json/_build/latest?definitionId=8&branchName=develop)
 Docs            | [![Documentation](https://img.shields.io/badge/docs-master-brightgreen.svg)](https://www.boost.org/doc/libs/master/libs/json/) | [![Documentation](https://img.shields.io/badge/docs-develop-brightgreen.svg)](https://www.boost.org/doc/libs/develop/libs/json/)
@@ -81,7 +81,10 @@ file in your project.
 ```
 
 MSVC users must also define the macro `BOOST_JSON_NO_LIB` to disable
-auto-linking.
+auto-linking. Note, that if you also want to avoid linking to Boost.Container,
+which is a dependency of Boost.JSON, you have to define
+`BOOST_CONTAINER_NO_LIB`. In order to disable auto-linking to Boost libraries
+completely you can define `BOOST_ALL_NO_LIB` instead.
 
 ### Embedded
 
@@ -95,6 +98,10 @@ building the library or including the function definitions:
 #define BOOST_JSON_STACK_BUFFER_SIZE 1024
 #include <boost/json/src.hpp>
 ```
+### Endianness
+
+Boost.JSON uses [Boost.Endian](https://www.boost.org/doc/libs/release/libs/endian/doc/html/endian.html)
+in order to support both little endian and big endian platforms.
 
 ### Supported Compilers
 
@@ -103,6 +110,9 @@ Boost.JSON has been tested with the following compilers:
 * clang: 3.5, 3.6, 3.7, 3.8, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14
 * gcc: 4.8, 4.9, 5, 6, 7, 8, 9, 10, 11, 12
 * msvc: 14.0, 14.1, 14.2, 14.3
+
+**Note: support for GCC 4.8 and 4.9 is deprecated and will stop in
+Boost 1.88.0.**
 
 ### Supported JSON Text
 

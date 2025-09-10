@@ -457,15 +457,7 @@ public:
             BOOST_TEST(a.at(0).is_number());
             BOOST_TEST(a.at(1).is_bool());
             BOOST_TEST(a.at(2).is_string());
-            try
-            {
-                a.at(3);
-                BOOST_TEST_FAIL();
-            }
-            catch(std::out_of_range const&)
-            {
-                BOOST_TEST_PASS();
-            }
+            BOOST_TEST_THROWS_WITH_LOCATION( a.at(3) );
         }
 
         // at(pos) &&
@@ -474,15 +466,7 @@ public:
             BOOST_TEST(std::move(a).at(0).is_number());
             BOOST_TEST(std::move(a).at(1).is_bool());
             BOOST_TEST(std::move(a).at(2).is_string());
-            try
-            {
-                std::move(a).at(3);
-                BOOST_TEST_FAIL();
-            }
-            catch(std::out_of_range const&)
-            {
-                BOOST_TEST_PASS();
-            }
+            BOOST_TEST_THROWS_WITH_LOCATION( a.at(3) );
             value&& rv = std::move(a).at(0);
             (void)rv;
         }
@@ -493,15 +477,31 @@ public:
             BOOST_TEST(a.at(0).is_number());
             BOOST_TEST(a.at(1).is_bool());
             BOOST_TEST(a.at(2).is_string());
-            try
-            {
-                a.at(3);
-                BOOST_TEST_FAIL();
-            }
-            catch(std::out_of_range const&)
-            {
-                BOOST_TEST_PASS();
-            }
+            BOOST_TEST_THROWS_WITH_LOCATION( a.at(3) );
+        }
+
+        // try_at(pos)
+        {
+            array a({ 1, true, str_ });
+            BOOST_TEST( a.try_at(0)->is_number() );
+            BOOST_TEST( a.try_at(1)->is_bool() );
+            BOOST_TEST( a.try_at(2)->is_string() );
+
+            system::error_code const ec = a.try_at(3).error();
+            BOOST_TEST( ec == error::out_of_range );
+            BOOST_TEST( ec.has_location() );
+        }
+
+        // try_at(pos) const
+        {
+            array const a({1, true, str_});
+            BOOST_TEST(a.try_at(0)->is_number());
+            BOOST_TEST(a.try_at(1)->is_bool());
+            BOOST_TEST(a.try_at(2)->is_string());
+
+            system::error_code const ec = a.try_at(3).error();
+            BOOST_TEST( ec == error::out_of_range );
+            BOOST_TEST( ec.has_location() );
         }
 
         // operator[&](size_type) &

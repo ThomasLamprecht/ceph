@@ -1,4 +1,4 @@
-import { Component, OnInit } from '@angular/core';
+import { Component, OnInit, TemplateRef, ViewChild } from '@angular/core';
 import { Permissions } from '~/app/shared/models/permissions';
 import { Router } from '@angular/router';
 
@@ -17,7 +17,6 @@ import { CdTableFetchDataContext } from '~/app/shared/models/cd-table-fetch-data
 import { CdTableSelection } from '~/app/shared/models/cd-table-selection';
 import { AuthStorageService } from '~/app/shared/services/auth-storage.service';
 import { URLBuilderService } from '~/app/shared/services/url-builder.service';
-import { ModalService } from '~/app/shared/services/modal.service';
 import { TaskWrapperService } from '~/app/shared/services/task-wrapper.service';
 import { FinishedTask } from '~/app/shared/models/finished-task';
 import { NotificationService } from '~/app/shared/services/notification.service';
@@ -26,6 +25,7 @@ import { CephfsMountDetailsComponent } from '../cephfs-mount-details/cephfs-moun
 import { map, switchMap } from 'rxjs/operators';
 import { HealthService } from '~/app/shared/api/health.service';
 import { CephfsAuthModalComponent } from '~/app/ceph/cephfs/cephfs-auth-modal/cephfs-auth-modal.component';
+import { ModalCdsService } from '~/app/shared/services/modal-cds.service';
 import { DeletionImpact } from '~/app/shared/enum/delete-confirmation-modal-impact.enum';
 
 const BASE_URL = 'cephfs/fs';
@@ -37,6 +37,9 @@ const BASE_URL = 'cephfs/fs';
   providers: [{ provide: URLBuilderService, useValue: new URLBuilderService(BASE_URL) }]
 })
 export class CephfsListComponent extends ListWithDetails implements OnInit {
+  @ViewChild('deleteTpl', { static: true })
+  deleteTpl: TemplateRef<any>;
+
   columns: CdTableColumn[];
   filesystems: any = [];
   selection = new CdTableSelection();
@@ -53,10 +56,11 @@ export class CephfsListComponent extends ListWithDetails implements OnInit {
     private router: Router,
     private urlBuilder: URLBuilderService,
     private configurationService: ConfigurationService,
-    private modalService: ModalService,
+    private modalService: ModalCdsService,
     private taskWrapper: TaskWrapperService,
     public notificationService: NotificationService,
-    private healthService: HealthService
+    private healthService: HealthService,
+    private cdsModalService: ModalCdsService
   ) {
     super();
     this.permissions = this.authStorageService.getPermissions();
@@ -172,11 +176,12 @@ export class CephfsListComponent extends ListWithDetails implements OnInit {
 
   removeVolumeModal() {
     const volName = this.selection.first().mdsmap['fs_name'];
-    this.modalService.show(DeleteConfirmationModalComponent, {
+    this.cdsModalService.show(DeleteConfirmationModalComponent, {
       impact: DeletionImpact.high,
       itemDescription: 'File System',
       itemNames: [volName],
       actionDescription: 'remove',
+      bodyTemplate: this.deleteTpl,
       submitActionObservable: () =>
         this.taskWrapper.wrapTaskAroundCall({
           task: new FinishedTask('cephfs/remove', { volumeName: volName }),
@@ -199,13 +204,9 @@ export class CephfsListComponent extends ListWithDetails implements OnInit {
 
   authorizeModal() {
     const selectedFileSystem = this.selection?.selected?.[0];
-    this.modalService.show(
-      CephfsAuthModalComponent,
-      {
-        fsName: selectedFileSystem.mdsmap['fs_name'],
-        id: selectedFileSystem.id
-      },
-      { size: 'lg' }
-    );
+    this.modalService.show(CephfsAuthModalComponent, {
+      fsName: selectedFileSystem.mdsmap['fs_name'],
+      id: selectedFileSystem.id
+    });
   }
 }

@@ -25,6 +25,8 @@
 #include "include/types.h"
 #include "include/fs_types.h"
 
+#include <unordered_map>
+
 // We're only converting errors defined in errno.h, not standard Windows
 // system error codes that are usually retrievied using GetLastErrorCode().
 // TODO: consider converting WinSock2 (WSA*) error codes, which are quite

@@ -15,9 +15,9 @@ export class DashboardPieComponent implements OnChanges, OnInit {
   @Input()
   data: any;
   @Input()
-  highThreshold: number;
+  highThreshold = 0;
   @Input()
-  lowThreshold: number;
+  lowThreshold = 0;
 
   color: string;
 
@@ -157,18 +157,20 @@ export class DashboardPieComponent implements OnChanges, OnInit {
   private prepareRawUsage(chart: Record<string, any>, data: Record<string, any>) {
     const nearFullRatioPercent = this.lowThreshold * 100;
     const fullRatioPercent = this.highThreshold * 100;
-    const percentAvailable = this.calcPercentage(data.max - data.current, data.max);
-    const percentUsed = this.calcPercentage(data.current, data.max);
+    const max = typeof data.max === 'string' ? parseFloat(data.max) : data.max;
+    const current = typeof data.current === 'string' ? parseFloat(data.current) : data.current;
+    const percentAvailable = this.calcPercentage(max - current, max);
+    const percentUsed = this.calcPercentage(current, max);
 
-    if (fullRatioPercent >= 0 && percentUsed >= fullRatioPercent) {
+    if (fullRatioPercent > 0 && percentUsed >= fullRatioPercent) {
       this.color = 'chart-color-red';
-    } else if (nearFullRatioPercent >= 0 && percentUsed >= nearFullRatioPercent) {
+    } else if (nearFullRatioPercent > 0 && percentUsed >= nearFullRatioPercent) {
       this.color = 'chart-color-yellow';
     } else {
       this.color = 'chart-color-blue';
     }
 
-    if (fullRatioPercent >= 0 && nearFullRatioPercent >= 0) {
+    if (fullRatioPercent > 0 && nearFullRatioPercent > 0) {
       chart.dataset[0].data = [
         Math.round(nearFullRatioPercent),
         Math.round(Math.abs(nearFullRatioPercent - fullRatioPercent)),

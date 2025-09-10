@@ -1,5 +1,5 @@
 --
--- Copyright (c) 2019-2023 Ruben Perez Hidalgo (rubenperez038 at gmail dot com)
+-- Copyright (c) 2019-2024 Ruben Perez Hidalgo (rubenperez038 at gmail dot com)
 --
 -- Distributed under the Boost Software License, Version 1.0. (See accompanying
 -- file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -7,9 +7,10 @@
 
 -- System variables
 SET NAMES utf8;
-SET global max_connections = 10000;
 SET session sql_mode = 'ALLOW_INVALID_DATES'; -- allow zero and invalid dates
 SET session time_zone = '+02:00'; -- arbitrary, but should match whatever we use in database_types
+SET global max_allowed_packet = 83886080; -- 0x5000000 - for max packet size tests
+SET global max_connections = 5000; -- thread safety tests use a lot of connections and may be run in parallel
 
 START TRANSACTION;
 
@@ -55,6 +56,17 @@ CREATE TABLE three_rows_table (
     field_varchar VARCHAR(255)
 );
 INSERT INTO three_rows_table VALUES (1, 'f0'), (2, 'f1'), (3, 'f2');
+
+CREATE TABLE multifield_table(
+    id INT NOT NULL PRIMARY KEY,
+    field_varchar VARCHAR(255) NOT NULL,
+    field_int INT NOT NULL,
+    field_nullable FLOAT,
+    field_double DOUBLE NOT NULL
+);
+INSERT INTO multifield_table VALUES
+    (1, "aaa", 11, 1.1, 0.1),
+    (2, "bbb", 22, NULL, 0.2);
 
 -- Tables to test we retrieve correctly values of every possible type
 -- Every type gets a separate table. Each field within the table is a possible variant of this same type
@@ -142,6 +154,15 @@ INSERT INTO types_year VALUES
     ("zero",    0)
 ;
 
+CREATE TABLE types_bool(
+    id VARCHAR(50) NOT NULL PRIMARY KEY,
+    field_default BOOL
+);
+INSERT INTO types_bool VALUES
+    ("true",  TRUE),
+    ("false", FALSE)
+;
+
 CREATE TABLE types_bit(
     id VARCHAR(50) NOT NULL PRIMARY KEY,
     field_1 BIT(1),
@@ -226,8 +247,9 @@ INSERT INTO types_date VALUES
     ("yregular_invalid_date_leap100",     "1900-02-29")
 ;
 
+-- A bug in MySQL 5.x requires us to set this collation to binary to get the correct order
 CREATE TABLE types_datetime(
-    id VARCHAR(50) NOT NULL PRIMARY KEY,
+    id VARCHAR(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL PRIMARY KEY,
     field_0 DATETIME(0),
     field_1 DATETIME(1),
     field_2 DATETIME(2),
@@ -483,6 +505,53 @@ DROP USER IF EXISTS 'mysqlnp_empty_password_user'@'%';
 CREATE USER 'mysqlnp_empty_password_user'@'%' IDENTIFIED WITH 'mysql_native_password';
 ALTER USER 'mysqlnp_empty_password_user'@'%' IDENTIFIED BY '';
 GRANT ALL PRIVILEGES ON boost_mysql_integtests.* TO 'mysqlnp_empty_password_user'@'%';
+
+-- Some containers don't allow remote root access. Enable it.
+CREATE USER IF NOT EXISTS 'root'@'%' IDENTIFIED BY ''; 
+GRANT ALL PRIVILEGES ON *.* TO 'root'@'%' WITH GRANT OPTION;
+
+-- Stored procedures
+DELIMITER //
+
+CREATE PROCEDURE sp_insert(IN pin VARCHAR(255))
+BEGIN
+    INSERT INTO inserts_table (field_varchar) VALUES (pin);
+END //
+
+CREATE PROCEDURE sp_select_1(IN pin VARCHAR(255))
+BEGIN
+    SELECT * FROM one_row_table;
+END //
+
+CREATE PROCEDURE sp_select_2(IN pin1 VARCHAR(255), IN pin2 INT)
+BEGIN
+    SELECT * FROM one_row_table;
+    SELECT pin1, pin2;
+END //
+
+CREATE PROCEDURE sp_outparams(
+    IN pin INT,
+    OUT pout INT,
+    INOUT pinout INT
+)
+BEGIN
+    SELECT * FROM one_row_table;
+    SET pout = pin;
+    SET pinout = pinout + 1;
+END //
+
+CREATE PROCEDURE sp_signal()
+BEGIN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'An error occurred', MYSQL_ERRNO = 1002;
+END //
+
+CREATE PROCEDURE sp_spotchecks()
+BEGIN
+    SELECT * FROM multifield_table WHERE id = 1;
+    SELECT * FROM one_row_table;
+END //
+
+DELIMITER ;
 
 COMMIT;
 FLUSH PRIVILEGES;

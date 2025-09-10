@@ -27,6 +27,7 @@
 #include <seastar/rpc/lz4_compressor.hh>
 #include <seastar/rpc/lz4_fragmented_compressor.hh>
 #include <seastar/rpc/multi_algo_compressor_factory.hh>
+#include <seastar/testing/random.hh>
 #include <seastar/testing/test_case.hh>
 #include <seastar/testing/thread_test_case.hh>
 #include <seastar/testing/test_runner.hh>
@@ -35,11 +36,14 @@
 #include <seastar/core/distributed.hh>
 #include <seastar/core/loop.hh>
 #include <seastar/core/metrics_api.hh>
+#include <seastar/util/assert.hh>
 #include <seastar/util/defer.hh>
 #include <seastar/util/log.hh>
 #include <seastar/util/closeable.hh>
 #include <seastar/util/noncopyable_function.hh>
 #include <seastar/util/later.hh>
+
+#include <boost/range/numeric.hpp>
 
 #include <span>
 
@@ -210,7 +214,7 @@ class rpc_test_env {
 
         future<> unregister_handler(MsgType t) {
             auto it = std::find(_handlers.begin(), _handlers.end(), t);
-            assert(it != _handlers.end());
+            SEASTAR_ASSERT(it != _handlers.end());
             _handlers.erase(it);
             return proto().unregister_handler(t);
         }
@@ -1665,7 +1669,7 @@ SEASTAR_THREAD_TEST_CASE(test_rpc_metric_domains) {
         const auto& mf = values.find(name);
         BOOST_REQUIRE(mf != values.end());
         for (auto&& mi : mf->second) {
-            for (auto&&li : mi.first) {
+            for (auto&&li : mi.first.labels()) {
                 if (li.first == "domain" && li.second == domain) {
                     return mi.second->get_function()().i();
                 }
@@ -1817,7 +1821,7 @@ SEASTAR_THREAD_TEST_CASE(test_compressor_empty_frames) {
     cfg.server_options = so;
 
     rpc_test_env<>::do_with_thread(cfg, co, [&] (rpc_test_env<>& env, test_rpc_proto::client& c) {
-        // Perform an RPC once to initialize the connection and compressors. 
+        // Perform an RPC once to initialize the connection and compressors.
         env.register_handler(1, []() { return 42; }).get();
         auto proto_client = env.proto().make_client<int()>(1);
         BOOST_REQUIRE_EQUAL(proto_client(c).get(), 42);

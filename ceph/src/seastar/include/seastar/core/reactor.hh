@@ -47,7 +47,7 @@
 #include <seastar/core/scheduling_specific.hh>
 #include <seastar/core/seastar.hh>
 #include <seastar/core/semaphore.hh>
-#include <seastar/core/smp.hh>
+#include <seastar/core/shared_mutex.hh>
 #include <seastar/core/sstring.hh>
 #include <seastar/core/temporary_buffer.hh>
 #include <seastar/core/thread_cputime_clock.hh>
@@ -56,16 +56,13 @@
 #include <seastar/net/api.hh>
 #include <seastar/util/eclipse.hh>
 #include <seastar/util/log.hh>
-#include <seastar/util/std-compat.hh>
 #include <seastar/util/modules.hh>
+#include <seastar/util/noncopyable_function.hh>
+#include <seastar/util/std-compat.hh>
 #include "internal/pollable_fd.hh"
 
 #ifndef SEASTAR_MODULE
 #include <boost/container/static_vector.hpp>
-#include <boost/lockfree/spsc_queue.hpp>
-#include <boost/next_prior.hpp>
-#include <boost/range/irange.hpp>
-#include <boost/thread/barrier.hpp>
 #include <atomic>
 #include <cassert>
 #include <chrono>
@@ -80,12 +77,6 @@
 #include <sys/socket.h>
 #include <netinet/ip.h>
 
-#ifdef HAVE_OSV
-#include <osv/sched.hh>
-#include <osv/mutex.h>
-#include <osv/condvar.h>
-#include <osv/newpoll.hh>
-#endif
 #endif
 
 struct statfs;
@@ -222,16 +213,7 @@ private:
     reactor_config _cfg;
     file_desc _notify_eventfd;
     file_desc _task_quota_timer;
-#ifdef HAVE_OSV
-    reactor_backend_osv _backend;
-    sched::thread _timer_thread;
-    sched::thread *_engine_thread;
-    mutable mutex _timer_mutex;
-    condvar _timer_cond;
-    s64 _timer_due = 0;
-#else
     std::unique_ptr<reactor_backend> _backend;
-#endif
     sigset_t _active_sigmask; // holds sigmask while sleeping with sig disabled
     std::vector<pollfn*> _pollers;
 
@@ -251,7 +233,6 @@ private:
     bool _stopped = false;
     bool _finished_running_tasks = false;
     condition_variable _stop_requested;
-    bool _handle_sigint = true;
     std::optional<future<std::unique_ptr<network_stack>>> _network_stack_ready;
     int _return = 0;
     promise<> _start_promise;
@@ -262,7 +243,6 @@ private:
     metrics::internal::time_estimated_histogram _stalls_histogram;
     std::unique_ptr<internal::cpu_stall_detector> _cpu_stall_detector;
 
-    unsigned _max_task_backlog = 1000;
     timer<>::set_t _timers;
     timer<>::set_t::timer_list_t _expired_timers;
     timer<lowres_clock>::set_t _lowres_timers;
@@ -303,15 +283,15 @@ private:
 
     boost::container::static_vector<std::unique_ptr<task_queue>, max_scheduling_groups()> _task_queues;
     internal::scheduling_group_specific_thread_local_data _scheduling_group_specific_data;
+    shared_mutex _scheduling_group_keys_mutex;
     int64_t _last_vruntime = 0;
     task_queue_list _active_task_queues;
     task_queue_list _activating_task_queues;
     task_queue* _at_destroy_tasks;
-    sched_clock::duration _task_quota;
     task* _current_task = nullptr;
     /// Handler that will be called when there is no task to execute on cpu.
     /// It represents a low priority work.
-    /// 
+    ///
     /// Handler's return value determines whether handler did any actual work. If no work was done then reactor will go
     /// into sleep.
     ///
@@ -324,20 +304,31 @@ private:
     const bool _reuseport;
     circular_buffer<double> _loads;
     double _load = 0;
+    // Next two fields are required to enforce the monotonicity of total_steal_time()
+    // see that method for details.
+
+    // Last measured accumulated steal time, i.e., the simple difference of accumulated
+    // awake time and consumed thread CPU time.
+    sched_clock::duration _last_true_steal{0};
+    // Accumulated steal time forced to be monotinic by rejecting any updates that would
+    // decrease it. See total_steal_time() for details.
+    sched_clock::duration _last_mono_steal{0};
     sched_clock::duration _total_idle{0};
-    sched_clock::duration _total_sleep;
+    sched_clock::duration _total_sleep{0};
     sched_clock::time_point _start_time = now();
-    std::chrono::nanoseconds _max_poll_time = calculate_poll_time();
     output_stream<char>::batch_flush_list_t _flush_batching;
     std::atomic<bool> _sleeping alignas(seastar::cache_line_size){0};
     pthread_t _thread_id alignas(seastar::cache_line_size) = pthread_self();
-    bool _strict_o_direct = true;
-    bool _force_io_getevents_syscall = false;
-    bool _bypass_fsync = false;
-    bool _have_aio_fsync = false;
-    bool _kernel_page_cache = false;
     std::atomic<bool> _dying{false};
     gate _background_gate;
+
+    inline auto& get_sg_data(const scheduling_group& sg) {
+        return _scheduling_group_specific_data.per_scheduling_group_data[sg._id];
+    }
+
+    inline auto& get_sg_data(unsigned sg_id) {
+        return _scheduling_group_specific_data.per_scheduling_group_data[sg_id];
+    }
 
 private:
     static std::chrono::nanoseconds calculate_poll_time();
@@ -363,10 +354,13 @@ private:
     bool pure_poll_once();
 public:
     /// Register a user-defined signal handler
+    [[deprecated("Use seastar::handle_signal(signo, handler, once); instead")]]
     void handle_signal(int signo, noncopyable_function<void ()>&& handler);
     void wakeup();
     /// @private
     bool stopped() const noexcept { return _stopped; }
+    /// @private
+    uint64_t polls() const noexcept { return _polls; }
 
 private:
     class signals {
@@ -395,6 +389,8 @@ private:
     friend class thread_context;
     friend class internal::cpu_stall_detector;
 
+    friend void handle_signal(int signo, noncopyable_function<void ()>&& handler, bool once);
+
     uint64_t pending_task_count() const;
     void run_tasks(task_queue& tq);
     bool have_more_tasks() const;
@@ -405,8 +401,6 @@ private:
     task_queue* pop_active_task_queue(sched_clock::time_point now);
     void insert_activating_task_queues();
     void account_runtime(task_queue& tq, sched_clock::duration runtime);
-    void account_idle(sched_clock::duration idletime);
-    void allocate_scheduling_group_specific_data(scheduling_group sg, unsigned long key_id);
     future<> rename_scheduling_group_specific_data(scheduling_group sg);
     future<> init_scheduling_group(scheduling_group sg, sstring name, sstring shortname, float shares);
     future<> init_new_scheduling_group_key(scheduling_group_key key, scheduling_group_key_config cfg);
@@ -437,7 +431,11 @@ private:
     future<temporary_buffer<char>>
     do_recv_some(pollable_fd_state& fd, internal::buffer_allocator* ba);
 
+    void configure(const reactor_options& opts);
     int do_run();
+    // Waits for all background tasks on all shards
+    static future<> drain();
+
 public:
     explicit reactor(std::shared_ptr<smp> smp, alien::instance& alien, unsigned id, reactor_backend_selector rbs, reactor_config cfg);
     reactor(const reactor&) = delete;
@@ -460,25 +458,12 @@ public:
         }
     }
 
-#if SEASTAR_API_LEVEL < 7
-    [[deprecated("Use io_priority_class::register_one")]]
-    io_priority_class register_one_priority_class(sstring name, uint32_t shares);
-
-    [[deprecated("Use io_priority_class.update_shares")]]
-    future<> update_shares_for_class(io_priority_class pc, uint32_t shares);
-
-    [[deprecated("Use io_priority_class.rename")]]
-    static future<> rename_priority_class(io_priority_class pc, sstring new_name) noexcept;
-#endif
-
     /// @private
     future<> update_bandwidth_for_queues(internal::priority_class pc, uint64_t bandwidth);
     /// @private
     void rename_queues(internal::priority_class pc, sstring new_name);
     /// @private
     void update_shares_for_queues(internal::priority_class pc, uint32_t shares);
-
-    void configure(const reactor_options& opts);
 
     server_socket listen(socket_address sa, listen_options opts = {});
 
@@ -501,12 +486,15 @@ public:
     future<> touch_directory(std::string_view name, file_permissions permissions = file_permissions::default_dir_permissions) noexcept;
     future<std::optional<directory_entry_type>>  file_type(std::string_view name, follow_symlink = follow_symlink::yes) noexcept;
     future<stat_data> file_stat(std::string_view pathname, follow_symlink) noexcept;
+    future<> chown(std::string_view filepath, uid_t owner, gid_t group);
+    future<std::optional<struct group_details>> getgrnam(std::string_view name);
     future<uint64_t> file_size(std::string_view pathname) noexcept;
     future<bool> file_accessible(std::string_view pathname, access_flags flags) noexcept;
     future<bool> file_exists(std::string_view pathname) noexcept {
         return file_accessible(pathname, access_flags::exists);
     }
     future<fs_type> file_system_at(std::string_view pathname) noexcept;
+    future<std::filesystem::space_info> file_system_space(std::string_view pathname) noexcept;
     future<struct statvfs> statvfs(std::string_view pathname) noexcept;
     future<> remove_file(std::string_view pathname) noexcept;
     future<> rename_file(std::string_view old_pathname, std::string_view new_pathname) noexcept;
@@ -559,12 +547,9 @@ public:
         run_in_background(futurize_invoke(std::forward<Func>(func)));
     }
 
-    // Waits for all background tasks on all shards
-    static future<> drain();
-
     /// Set a handler that will be called when there is no task to execute on cpu.
     /// Handler should do a low priority work.
-    /// 
+    ///
     /// Handler's return value determines whether handler did any actual work. If no work was done then reactor will go
     /// into sleep.
     ///
@@ -582,10 +567,12 @@ public:
     [[deprecated("Use this_shard_id")]]
     shard_id cpu_id() const;
 
-    void sleep();
+    void try_sleep();
 
     steady_clock_type::duration total_idle_time();
     steady_clock_type::duration total_busy_time();
+    steady_clock_type::duration total_awake_time() const;
+    std::chrono::nanoseconds total_cpu_time() const;
     std::chrono::nanoseconds total_steal_time();
 
     const io_stats& get_io_stats() const { return _io_stats; }
@@ -596,10 +583,6 @@ public:
     /// \return An object containing a snapshot of the statistics at this point in time.
     sched_stats get_sched_stats() const;
     uint64_t abandoned_failed_futures() const { return _abandoned_failed_futures; }
-#ifdef HAVE_OSV
-    void timer_thread_func();
-    void set_timer(sched::timer &tmr, s64 t);
-#endif
 private:
     /**
      * Add a new "poller" - a non-blocking function returning a boolean, that
@@ -647,6 +630,7 @@ private:
     friend future<> seastar::destroy_scheduling_group(scheduling_group) noexcept;
     friend future<> seastar::rename_scheduling_group(scheduling_group sg, sstring new_name, sstring new_shortname) noexcept;
     friend future<scheduling_group_key> scheduling_group_key_create(scheduling_group_key_config cfg) noexcept;
+    friend seastar::internal::log_buf::inserter_iterator do_dump_task_queue(seastar::internal::log_buf::inserter_iterator it, const task_queue& tq);
 
     future<struct statfs> fstatfs(int fd) noexcept;
     friend future<shared_ptr<file_impl>> make_file_impl(int fd, file_open_options options, int flags, struct stat st) noexcept;

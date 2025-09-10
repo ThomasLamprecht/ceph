@@ -30,6 +30,7 @@
 #include <seastar/core/scheduling.hh>
 #include <memory>
 #include <type_traits>
+#include <seastar/util/assert.hh>
 #include <seastar/util/std-compat.hh>
 #include <seastar/util/modules.hh>
 #include <ucontext.h>
@@ -168,7 +169,7 @@ public:
     /// \brief Destroys a \c thread object.
     ///
     /// The thread must not represent a running thread of execution (see join()).
-    ~thread() { assert(!_context || _context->_joined); }
+    ~thread() { SEASTAR_ASSERT(!_context || _context->_joined); }
     /// \brief Waits for thread execution to terminate.
     ///
     /// Waits for thread execution to terminate, and marks the thread object as not
@@ -183,13 +184,19 @@ public:
     ///
     /// Useful where we cannot call yield() immediately because we
     /// Need to take some cleanup action first.
-    static bool should_yield();
+    static bool should_yield() {
+        return need_preempt();
+    }
 
     /// \brief Yield if this thread ought to call yield() now.
     ///
     /// Useful where a code does long running computation and does
     /// not want to hog cpu for more then its share
-    static void maybe_yield();
+    static void maybe_yield() {
+        if (should_yield()) [[unlikely]] {
+            yield();
+        }
+    }
 
     static bool running_in_thread() {
         return thread_impl::get() != nullptr;

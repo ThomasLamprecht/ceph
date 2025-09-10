@@ -97,7 +97,7 @@ class DaemonPlacement(NamedTuple):
             gen,
         )
 
-    def matches_daemon(self, dd: DaemonDescription) -> bool:
+    def matches_daemon(self, dd: DaemonDescription, upgrade_in_progress: bool = False) -> bool:
         if self.daemon_type != dd.daemon_type:
             return False
         if self.hostname != dd.hostname:
@@ -105,11 +105,16 @@ class DaemonPlacement(NamedTuple):
         # fixme: how to match against network?
         if self.name and self.name != dd.daemon_id:
             return False
-        if self.ports:
-            if self.ports != dd.ports and dd.ports:
-                return False
-            if self.ip != dd.ip and dd.ip:
-                return False
+        # only consider daemon "not matching" on port/ip
+        # differences if we're not mid upgrade. During upgrade
+        # it's very likely we'll deploy the daemon with the
+        # new port/ips as part of the upgrade process
+        if not upgrade_in_progress:
+            if self.ports:
+                if self.ports != dd.ports and dd.ports:
+                    return False
+                if self.ip != dd.ip and dd.ip:
+                    return False
         return True
 
     def matches_rank_map(
@@ -153,6 +158,8 @@ class HostAssignment(object):
                  primary_daemon_type: Optional[str] = None,
                  per_host_daemon_type: Optional[str] = None,
                  rank_map: Optional[Dict[int, Dict[int, Optional[str]]]] = None,
+                 blocking_daemon_hosts: Optional[List[orchestrator.HostSpec]] = None,
+                 upgrade_in_progress: bool = False
                  ):
         assert spec
         self.spec = spec  # type: ServiceSpec
@@ -160,6 +167,7 @@ class HostAssignment(object):
         self.hosts: List[orchestrator.HostSpec] = hosts
         self.unreachable_hosts: List[orchestrator.HostSpec] = unreachable_hosts
         self.draining_hosts: List[orchestrator.HostSpec] = draining_hosts
+        self.blocking_daemon_hosts: List[orchestrator.HostSpec] = blocking_daemon_hosts or []
         self.filter_new_host = filter_new_host
         self.service_name = spec.service_name()
         self.daemons = daemons
@@ -169,6 +177,7 @@ class HostAssignment(object):
         self.per_host_daemon_type = per_host_daemon_type
         self.ports_start = spec.get_port_start()
         self.rank_map = rank_map
+        self.upgrade_in_progress = upgrade_in_progress
 
     def hosts_by_label(self, label: str) -> List[orchestrator.HostSpec]:
         return [h for h in self.hosts if label in h.labels]
@@ -232,7 +241,7 @@ class HostAssignment(object):
             for dd in existing:
                 found = False
                 for p in host_slots:
-                    if p.matches_daemon(dd):
+                    if p.matches_daemon(dd, self.upgrade_in_progress):
                         host_slots.remove(p)
                         found = True
                         break
@@ -309,7 +318,7 @@ class HostAssignment(object):
         for dd in daemons:
             found = False
             for p in others:
-                if p.matches_daemon(dd) and p.matches_rank_map(dd, self.rank_map, ranks):
+                if p.matches_daemon(dd, self.upgrade_in_progress) and p.matches_rank_map(dd, self.rank_map, ranks):
                     others.remove(p)
                     if dd.is_active:
                         existing_active.append(dd)
@@ -333,10 +342,28 @@ class HostAssignment(object):
         existing = existing_active + existing_standby
 
         # build to_add
+        blocking_daemon_hostnames = [
+            h.hostname for h in self.blocking_daemon_hosts
+        ]
+        unreachable_hostnames = [
+            h.hostname for h in self.unreachable_hosts
+        ]
         if not count:
-            to_add = [dd for dd in others if dd.hostname not in [
-                h.hostname for h in self.unreachable_hosts]]
+            to_add = [
+                dd for dd in others if (
+                    dd.hostname not in blocking_daemon_hostnames
+                    and dd.hostname not in unreachable_hostnames
+                )
+            ]
         else:
+            if blocking_daemon_hostnames:
+                to_remove.extend([
+                    dd for dd in existing if dd.hostname in blocking_daemon_hostnames
+                ])
+                existing = [
+                    dd for dd in existing if dd.hostname not in blocking_daemon_hostnames
+                ]
+
             # The number of new slots that need to be selected in order to fulfill count
             need = count - len(existing)
 
@@ -356,7 +383,7 @@ class HostAssignment(object):
                 for dp in matching_dps:
                     if need <= 0:
                         break
-                    if dp.hostname in related_service_hosts and dp.hostname not in [h.hostname for h in self.unreachable_hosts]:
+                    if dp.hostname in related_service_hosts and dp.hostname not in unreachable_hostnames:
                         logger.debug(f'Preferring {dp.hostname} for service {self.service_name} as related daemons have been placed there')
                         to_add.append(dp)
                         need -= 1  # this is last use of need so it can work as a counter
@@ -370,7 +397,10 @@ class HostAssignment(object):
             for dp in others:
                 if need <= 0:
                     break
-                if dp.hostname not in [h.hostname for h in self.unreachable_hosts]:
+                if (
+                    dp.hostname not in unreachable_hostnames
+                    and dp.hostname not in blocking_daemon_hostnames
+                ):
                     to_add.append(dp)
                     need -= 1  # this is last use of need in this function so it can work as a counter
 
@@ -385,6 +415,8 @@ class HostAssignment(object):
 
     def find_ip_on_host(self, hostname: str, subnets: List[str]) -> Optional[str]:
         for subnet in subnets:
+            # to normalize subnet
+            subnet = str(ipaddress.ip_network(subnet))
             ips: List[str] = []
             # following is to allow loopback interfaces for both ipv4 and ipv6. Since we
             # only have the subnet (and no IP) we assume default loopback IP address.

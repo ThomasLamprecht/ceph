@@ -13,6 +13,7 @@
  */
 
 #include "common/config.h"
+#include "common/debug.h"
 #include "osdc/Journaler.h"
 #include "events/ESubtreeMap.h"
 #include "events/ESession.h"
@@ -38,6 +39,8 @@
 #include "events/ESegment.h"
 #include "events/ELid.h"
 
+#include "include/denc.h"
+#include "include/random.h" // for ceph::util::generate_random_number()
 #include "include/stringify.h"
 
 #include "LogSegment.h"
@@ -48,6 +51,7 @@
 #include "Server.h"
 #include "Migrator.h"
 #include "Mutation.h"
+#include "SnapRealm.h"
 
 #include "InoTable.h"
 #include "MDSTableClient.h"
@@ -235,6 +239,14 @@ void LogSegment::try_to_expire(MDSRank *mds, MDSGatherBuilder &gather_bld, int o
     }
   }
 
+  auto const oft_cseq = mds->mdcache->open_file_table.get_committed_log_seq();
+  if (!mds->mdlog->is_capped() && seq >= oft_cseq) {
+    dout(10) << *this << ".try_to_expire"
+             << " defer expire for oft_committed_seq (" << oft_cseq
+             << ") <= seq (" << seq << ")" << dendl;
+    mds->mdcache->open_file_table.wait_for_commit(seq, gather_bld.new_sub());
+  }
+
   ceph_assert(g_conf()->mds_kill_journal_expire_at != 3);
 
   std::map<int64_t, std::vector<CInodeCommitOperations>> ops_vec_map;
@@ -310,14 +322,12 @@ void LogSegment::try_to_expire(MDSRank *mds, MDSGatherBuilder &gather_bld, int o
   touched_sessions.clear();
 
   // pending commit atids
-  for (map<int, ceph::unordered_set<version_t> >::iterator p = pending_commit_tids.begin();
+  for (auto p = pending_commit_tids.begin();
        p != pending_commit_tids.end();
        ++p) {
     MDSTableClient *client = mds->get_table_client(p->first);
     ceph_assert(client);
-    for (ceph::unordered_set<version_t>::iterator q = p->second.begin();
-	 q != p->second.end();
-	 ++q) {
+    for (auto q = p->second.begin(); q != p->second.end(); ++q) {
       dout(10) << "try_to_expire " << get_mdstable_name(p->first) << " transaction " << *q 
 	       << " pending commit (not yet acked), waiting" << dendl;
       ceph_assert(!client->has_committed(*q));
@@ -346,9 +356,10 @@ void LogSegment::try_to_expire(MDSRank *mds, MDSGatherBuilder &gather_bld, int o
     (*p)->add_waiter(CInode::WAIT_TRUNC, gather_bld.new_sub());
   }
   // purge inodes
-  dout(10) << "try_to_expire waiting for purge of " << purging_inodes << dendl;
-  if (purging_inodes.size())
+  if (purging_inodes.size()) {
+    dout(10) << "try_to_expire waiting for purge of " << purging_inodes << dendl;
     set_purged_cb(gather_bld.new_sub());
+  }
   
   if (gather_bld.has_subs()) {
     dout(6) << "LogSegment(" << seq << "/" << offset << ").try_to_expire waiting" << dendl;
@@ -357,6 +368,13 @@ void LogSegment::try_to_expire(MDSRank *mds, MDSGatherBuilder &gather_bld, int o
     ceph_assert(g_conf()->mds_kill_journal_expire_at != 5);
     dout(6) << "LogSegment(" << seq << "/" << offset << ").try_to_expire success" << dendl;
   }
+}
+
+void LogSegment::purge_inodes_finish(interval_set<inodeno_t>& inos){
+  purging_inodes.subtract(inos);
+  if (NULL != purged_cb &&
+      purging_inodes.empty())
+    purged_cb->complete(0);
 }
 
 // -----------------------
@@ -677,12 +695,14 @@ void EMetaBlob::remotebit::encode(bufferlist& bl) const
 {
   ENCODE_START(3, 2, bl);
   encode(dn, bl);
-  encode(dnfirst, bl);
-  encode(dnlast, bl);
-  encode(dnv, bl);
-  encode(ino, bl);
-  encode(d_type, bl);
-  encode(dirty, bl);
+  encode(std::tuple{
+    dnfirst,
+      dnlast,
+      dnv,
+      ino,
+      d_type,
+      dirty,
+  }, bl, 0);
   encode(alternate_name, bl);
   ENCODE_FINISH(bl);
 }
@@ -749,10 +769,12 @@ void EMetaBlob::nullbit::encode(bufferlist& bl) const
 {
   ENCODE_START(2, 2, bl);
   encode(dn, bl);
-  encode(dnfirst, bl);
-  encode(dnlast, bl);
-  encode(dnv, bl);
-  encode(dirty, bl);
+  encode(std::tuple{
+    dnfirst,
+    dnlast,
+    dnv,
+    dirty,
+  }, bl, 0);
   ENCODE_FINISH(bl);
 }
 
@@ -790,10 +812,12 @@ void EMetaBlob::dirlump::encode(bufferlist& bl, uint64_t features) const
 {
   ENCODE_START(2, 2, bl);
   encode(*fnode, bl);
-  encode(state, bl);
-  encode(nfull, bl);
-  encode(nremote, bl);
-  encode(nnull, bl);
+  encode(std::tuple{
+    state,
+    nfull,
+    nremote,
+    nnull,
+  }, bl, 0);
   _encode_bits(features);
   encode(dnbl, bl);
   ENCODE_FINISH(bl);
@@ -870,13 +894,17 @@ void EMetaBlob::encode(bufferlist& bl, uint64_t features) const
   encode(lump_map, bl, features);
   encode(roots, bl, features);
   encode(table_tids, bl);
-  encode(opened_ino, bl);
-  encode(allocated_ino, bl);
-  encode(used_preallocated_ino, bl);
+  encode(std::tuple{
+    opened_ino,
+    allocated_ino,
+    used_preallocated_ino,
+  }, bl, 0);
   encode(preallocated_inos, bl);
   encode(client_name, bl);
-  encode(inotablev, bl);
-  encode(sessionmapv, bl);
+  encode(std::tuple{
+    inotablev,
+    sessionmapv,
+  }, bl, 0);
   encode(truncate_start, bl);
   encode(truncate_finish, bl);
   encode(destroyed_inodes, bl);
@@ -887,8 +915,10 @@ void EMetaBlob::encode(bufferlist& bl, uint64_t features) const
     // make MDSRank use v6 format happy
     int64_t i = -1;
     bool b = false;
-    encode(i, bl);
-    encode(b, bl);
+    encode(std::tuple{
+      i,
+      b,
+    }, bl, 0);
   }
   encode(client_flushes, bl);
   ENCODE_FINISH(bl);

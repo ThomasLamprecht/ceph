@@ -1,15 +1,11 @@
 tasks:
-- install:
-- ceph:
-- rgw: [client.0]
-- tox: [client.0]
 - ragweed:
     client.0:
-      default-branch: ceph-squid
+      default-branch: ceph-tentacle
       rgw_server: client.0
       stages: prepare
 - ragweed:
     client.0:
-      default-branch: ceph-squid
+      default-branch: ceph-tentacle
       rgw_server: client.0
       stages: check

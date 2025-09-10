@@ -35,7 +35,7 @@ then compile:
 $ ninja -C build/release
 ```
 
-In case there are compilation issues, especially like ```g++: internal compiler error: Killed (program cc1plus)``` 
+In case there are compilation issues, especially like ```g++: internal compiler error: Killed (program cc1plus)```
 try giving more memory to gcc, either by limiting the amount of threads ( -j1 ) and/or allowing at least 4g ram to your
 machine.
 
@@ -88,11 +88,13 @@ and with CMake using the `Seastar` package:
 `CMakeLists.txt` for `my_app`:
 
 ```
+set (CMAKE_CXX_STANDARD 23)
+
 find_package (Seastar REQUIRED)
 
 add_executable (my_app
   my_app.cc)
-  
+
 target_link_libraries (my_app
   Seastar::seastar)
 ```
@@ -164,13 +166,16 @@ The documentation is available on the [web](http://docs.seastar.io/master/index.
 
 Resources
 ---------
-Ask questions and post patches on the development mailing list. Subscription
-information and archives are available [here](https://groups.google.com/forum/#!forum/seastar-dev),
-or just send an email to seastar-dev@googlegroups.com.
 
-Information can be found on the main [project website](http://seastar.io).
+* Seasatar Development Mailing List: Discuss challenges, propose improvements with
+  sending code contributions (patches), and get help from experienced developers.
+  Subscribe or browse archives: [here](https://groups.google.com/forum/#!forum/seastar-dev)
+  (or email seastar-dev@googlegroups.com).
+* GitHub Discussions: For more casual conversations and quick questions, consider
+  using the Seastar project's [discussions on Github](https://github.com/scylladb/seastar/discussions).
+* Issue Tracker: File bug reports on the project's [issue tracker](https://github.com/scylladb/seastar/issues).
 
-File bug reports on the project [issue tracker](https://github.com/scylladb/seastar/issues).
+Learn more about Seastar on the main [project website](http://seastar.io).
 
 The Native TCP/IP Stack
 -----------------------
@@ -199,3 +204,4 @@ Projects using Seastar
 * [redpanda](https://vectorized.io/): A Kafka replacement for mission critical systems
 * [Scylla](https://github.com/scylladb/scylla): A fast and reliable NoSQL data store compatible with Cassandra and DynamoDB
 * [smf](https://github.com/smfrpc/smf): The fastest RPC in the West
+* [Ceph - Crimson](https://github.com/ceph/ceph): Next-generation OSD (Object Storage Daemon) implementation based on the Seastar framework

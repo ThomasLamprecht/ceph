@@ -76,8 +76,11 @@ using rgw::IAM::s3GetObjectTagging;
 using rgw::IAM::s3GetObjectVersion;
 using rgw::IAM::s3GetObjectVersionTagging;
 using rgw::IAM::s3GetObjectVersionTorrent;
+using rgw::IAM::s3GetObjectAttributes;
+using rgw::IAM::s3GetObjectVersionAttributes;
 using rgw::IAM::s3GetPublicAccessBlock;
 using rgw::IAM::s3GetReplicationConfiguration;
+using rgw::IAM::s3GetObjectVersionForReplication;
 using rgw::IAM::s3ListAllMyBuckets;
 using rgw::IAM::s3ListBucket;
 using rgw::IAM::s3ListBucketMultipartUploads;
@@ -157,12 +160,17 @@ public:
     return 0;
   };
 
-  bool is_admin_of(const rgw_owner& o) const override {
+  bool is_admin() const override {
     ceph_abort();
     return false;
   }
 
   bool is_owner_of(const rgw_owner& owner) const override {
+    ceph_abort();
+    return false;
+  }
+
+  bool is_root() const override {
     ceph_abort();
     return false;
   }
@@ -174,12 +182,12 @@ public:
 
   string get_acct_name() const override {
     abort();
-    return 0;
+    return string{};
   }
 
   string get_subuser() const override {
     abort();
-    return 0;
+    return string{};
   }
 
   const std::string& get_tenant() const override {
@@ -220,7 +228,7 @@ protected:
   static string example7;
 public:
   PolicyTest() {
-    cct = new CephContext(CEPH_ENTITY_TYPE_CLIENT);
+    cct.reset(new CephContext(CEPH_ENTITY_TYPE_CLIENT), false);
   }
 };
 
@@ -420,6 +428,8 @@ TEST_F(PolicyTest, Parse3) {
   act2[s3GetObjectVersionAcl] = 1;
   act2[s3GetObjectTorrent] = 1;
   act2[s3GetObjectVersionTorrent] = 1;
+  act2[s3GetObjectAttributes] = 1;
+  act2[s3GetObjectVersionAttributes] = 1;
   act2[s3GetAccelerateConfiguration] = 1;
   act2[s3GetBucketAcl] = 1;
   act2[s3GetBucketOwnershipControls] = 1;
@@ -443,6 +453,7 @@ TEST_F(PolicyTest, Parse3) {
   act2[s3GetBucketPublicAccessBlock] = 1;
   act2[s3GetPublicAccessBlock] = 1;
   act2[s3GetBucketEncryption] = 1;
+  act2[s3GetObjectVersionForReplication] = 1;
 
   EXPECT_EQ(p->statements[2].action, act2);
   EXPECT_EQ(p->statements[2].notaction, None);
@@ -488,6 +499,8 @@ TEST_F(PolicyTest, Eval3) {
   s3allow[s3GetObjectVersion] = 1;
   s3allow[s3GetObjectAcl] = 1;
   s3allow[s3GetObjectVersionAcl] = 1;
+  s3allow[s3GetObjectAttributes] = 1;
+  s3allow[s3GetObjectVersionAttributes] = 1;
   s3allow[s3GetObjectTorrent] = 1;
   s3allow[s3GetObjectVersionTorrent] = 1;
   s3allow[s3GetAccelerateConfiguration] = 1;
@@ -513,6 +526,7 @@ TEST_F(PolicyTest, Eval3) {
   s3allow[s3GetBucketPublicAccessBlock] = 1;
   s3allow[s3GetPublicAccessBlock] = 1;
   s3allow[s3GetBucketEncryption] = 1;
+  s3allow[s3GetObjectVersionForReplication] = 1;
 
   ARN arn1(Partition::aws, Service::s3,
 		       "", arbitrary_tenant, "mybucket");
@@ -786,7 +800,9 @@ class ManagedPolicyTest : public ::testing::Test {
 protected:
   intrusive_ptr<CephContext> cct;
 public:
-  ManagedPolicyTest() : cct(new CephContext(CEPH_ENTITY_TYPE_CLIENT)) {}
+  ManagedPolicyTest() {
+    cct.reset(new CephContext(CEPH_ENTITY_TYPE_CLIENT), false);
+  }
 };
 
 TEST_F(ManagedPolicyTest, IAMFullAccess)
@@ -882,6 +898,8 @@ TEST_F(ManagedPolicyTest, AmazonS3ReadOnlyAccess)
   act[s3GetObjectVersionAcl] = 1;
   act[s3GetObjectTorrent] = 1;
   act[s3GetObjectVersionTorrent] = 1;
+  act[s3GetObjectAttributes] = 1;
+  act[s3GetObjectVersionAttributes] = 1;
   act[s3GetAccelerateConfiguration] = 1;
   act[s3GetBucketAcl] = 1;
   act[s3GetBucketOwnershipControls] = 1;
@@ -905,6 +923,7 @@ TEST_F(ManagedPolicyTest, AmazonS3ReadOnlyAccess)
   act[s3GetPublicAccessBlock] = 1;
   act[s3GetBucketPublicAccessBlock] = 1;
   act[s3GetBucketEncryption] = 1;
+  act[s3GetObjectVersionForReplication] = 1;
   // s3:List*
   act[s3ListMultipartUploadParts] = 1;
   act[s3ListBucket] = 1;
@@ -1047,7 +1066,7 @@ protected:
   const rgw::IAM::MaskedIP allowedIPv6Range = { true, rgw::IAM::Address("00100000000000010000110110111000100001011010001100000000000000000000000000000000100010100010111000000011011100000111001100110000"), 124 };
 public:
   IPPolicyTest() {
-    cct = new CephContext(CEPH_ENTITY_TYPE_CLIENT);
+    cct.reset(new CephContext(CEPH_ENTITY_TYPE_CLIENT), false);
   }
 };
 const string IPPolicyTest::arbitrary_tenant = "arbitrary_tenant";

@@ -7,18 +7,15 @@
 #  (See accompanying file LICENSE_1_0.txt or copy at
 #  http://www.boost.org/LICENSE_1_0.txt)
 
+import-search /boost/config/checks ;
+
 import common ;
+import config : requires ;
 import path ;
 import project ;
 import feature ;
 import configure ;
 import atomic-arch-config ;
-
-local here = [ modules.binding $(__name__) ] ;
-
-project.push-current [ project.current ] ;
-project.load [ path.join [ path.make $(here:D) ] ../../config/checks/architecture ] ;
-project.pop-current ;
 
 lib synchronization ;
 explicit synchronization ;
@@ -42,8 +39,17 @@ rule check-synchronization-lib ( properties * )
     return $(result) ;
 }
 
-project boost/atomic
+local cxx_requirements = [ requires
+      cxx11_static_assert
+    ] ;
+
+project
+    : common-requirements
+      <include>../include
+      $(boost_dependencies)
     : requirements
+      <library>/boost/align//boost_align
+      <library>/boost/preprocessor//boost_preprocessor
       <include>../src
       <threading>multi
       <link>shared:<define>BOOST_ATOMIC_DYN_LINK=1
@@ -54,6 +60,7 @@ project boost/atomic
     : usage-requirements
       <link>shared:<define>BOOST_ATOMIC_DYN_LINK=1
       <link>static:<define>BOOST_ATOMIC_STATIC_LINK=1
+      <define>BOOST_ATOMIC_NO_LIB=1
     : source-location ../src
     ;
 
@@ -140,8 +147,8 @@ lib boost_atomic
       <include>../src
       <conditional>@select-arch-specific-sources
       <conditional>@select-platform-specific-sources
+      $(cxx_requirements)
     : usage-requirements
       <conditional>@check-synchronization-lib
+      $(cxx_requirements)
    ;
-
-boost-install boost_atomic ;

@@ -25,6 +25,7 @@
 #include <boost/lockfree/queue.hpp>
 
 #include "KernelDevice.h"
+#include "log/Log.h"
 #include "include/buffer_raw.h"
 #include "include/intarith.h"
 #include "include/types.h"
@@ -33,6 +34,7 @@
 #include "include/str_map.h"
 #include "common/blkdev.h"
 #include "common/buffer_instrumentation.h"
+#include "common/Clock.h" // for ceph_clock_now()
 #include "common/errno.h"
 #if defined(__FreeBSD__)
 #include "bsm/audit_errno.h"
@@ -43,6 +45,12 @@
 #include "global/global_context.h"
 #include "io_uring.h"
 
+#ifdef WITH_CRIMSON
+#include "crimson/common/perf_counters_collection.h"
+#else
+#include "common/perf_counters_collection.h"
+#endif
+
 #define dout_context cct
 #define dout_subsys ceph_subsys_bdev
 #undef dout_prefix
@@ -52,6 +60,7 @@ using std::list;
 using std::map;
 using std::string;
 using std::vector;
+using namespace std::literals;
 
 using ceph::bufferlist;
 using ceph::bufferptr;
@@ -297,9 +306,13 @@ int KernelDevice::open(const string& p)
     goto out_fail;
   }
 
-  r = _aio_start();
-  if (r < 0) {
-    goto out_fail;
+  if (size > 0) {
+    r = _aio_start();
+    if (r < 0) {
+      goto out_fail;
+    }
+  } else {
+    aio = false;
   }
 
   _discard_update_threads();
@@ -543,7 +556,20 @@ void KernelDevice::_aio_stop()
   if (aio) {
     dout(10) << __func__ << dendl;
     aio_stop = true;
+
+    IOContext wakeup_ctx(cct, nullptr, false);
+    bufferlist bl;
+    aio_read(0, block_size, &bl, &wakeup_ctx);
+    aio_submit(&wakeup_ctx);
+
     aio_thread.join();
+
+    if (cct->_conf->bdev_debug_aio) {
+      for (auto& i: wakeup_ctx.running_aios) {
+	debug_aio_unlink(i);
+      }
+    }
+
     aio_stop = false;
     io_queue->shutdown();
   }
@@ -555,11 +581,6 @@ void KernelDevice::_discard_update_threads(bool discard_stop)
 
   uint64_t oldcount = discard_threads.size();
   uint64_t newcount = cct->_conf.get_val<uint64_t>("bdev_async_discard_threads");
-  if (newcount == 0) {
-    //backward compatibility mode to make sure legacy "bdev_async_discard" is
-    // taken into account if set.
-    newcount = cct->_conf.get_val<bool>("bdev_async_discard") ? 1 : 0;
-  }
   if (!cct->_conf.get_val<bool>("bdev_enable_discard") || !support_discard || discard_stop) {
     newcount = 0;
   }
@@ -962,9 +983,15 @@ void KernelDevice::aio_submit(IOContext *ioc)
   }
 
   void *priv = static_cast<void*>(ioc);
+  int retry_max = cct->_conf->bdev_aio_submit_retry_max;
+  int initial_delay_us = cct->_conf->bdev_aio_submit_retry_initial_delay_us;
+  dout(20) << __func__
+	   << " bdev_aio_submit_retry_max " << retry_max
+	   << " bdev_aio_submit_retry_initial_delay_us " << initial_delay_us
+	   << dendl;
   int r, retries = 0;
   r = io_queue->submit_batch(ioc->running_aios.begin(), e,
-			     priv, &retries);
+			     priv, &retries, retry_max, initial_delay_us);
 
   if (retries)
     derr << __func__ << " retries " << retries << dendl;
@@ -1167,8 +1194,8 @@ int KernelDevice::_discard(uint64_t offset, uint64_t len)
     return 0;
   }
   dout(10) << __func__
-	   << " 0x" << std::hex << offset << "~" << len << std::dec
-	   << dendl;
+           << " 0x" << std::hex << offset << "~" << len << std::dec
+           << dendl;
   r = BlkDev{fd_directs[WRITE_LIFE_NOT_SET]}.discard((int64_t)offset, (int64_t)len);
   return r;
 }
@@ -1547,22 +1574,19 @@ int KernelDevice::invalidate_cache(uint64_t off, uint64_t len)
   return r;
 }
 
-const char** KernelDevice::get_tracked_conf_keys() const
+std::vector<std::string> KernelDevice::get_tracked_keys()
+    const noexcept
 {
-  static const char* KEYS[] = {
-    "bdev_async_discard_threads",
-    "bdev_async_discard",
-    "bdev_enable_discard",
-    NULL
+  return {
+    "bdev_async_discard_threads"s,
+    "bdev_enable_discard"s
   };
-  return KEYS;
 }
 
 void KernelDevice::handle_conf_change(const ConfigProxy& conf,
 			     const std::set <std::string> &changed)
 {
-  if (changed.count("bdev_async_discard_threads") || changed.count("bdev_async_discard") ||
-      changed.count("bdev_enable_discard")) {
+  if (changed.count("bdev_async_discard_threads") || changed.count("bdev_enable_discard")) {
     _discard_update_threads();
   }
 }

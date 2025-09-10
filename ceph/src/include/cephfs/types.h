@@ -226,7 +226,6 @@ struct vinodeno_t {
     ls.push_back(new vinodeno_t);
     ls.push_back(new vinodeno_t(1, 2));
   }
-
   inodeno_t ino;
   snapid_t snapid;
 };
@@ -458,7 +457,6 @@ public:
   void decode(ceph::buffer::list::const_iterator& bl);
   void dump(ceph::Formatter *f) const;
   static void generate_test_instances(std::list<inline_data_t*>& ls);
-
   version_t version = 1;
 
 private:
@@ -1205,6 +1203,8 @@ void inode_t<Allocator>::dump(ceph::Formatter *f) const
   f->dump_unsigned("file_data_version", file_data_version);
   f->dump_unsigned("xattr_version", xattr_version);
   f->dump_unsigned("backtrace_version", backtrace_version);
+  f->dump_unsigned("inline_data_version", inline_data.version);
+  f->dump_unsigned("inline_data_length", inline_data.length());
 
   f->dump_string("stray_prior_path", stray_prior_path);
   f->dump_unsigned("max_size_ever", max_size_ever);

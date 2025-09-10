@@ -26,6 +26,8 @@
 #include "rgw_sal_dbstore.h"
 #include "rgw_bucket.h"
 
+#include "driver/rados/rgw_rados.h" // XXX: for RGW_OBJ_NS_MULTIPART, PUT_OBJ_CREATE, etc
+
 #define dout_subsys ceph_subsys_rgw
 
 using namespace std;
@@ -201,7 +203,7 @@ namespace rgw::sal {
   }
 
   /* stats - Not for first pass */
-  int DBBucket::read_stats(const DoutPrefixProvider *dpp,
+  int DBBucket::read_stats(const DoutPrefixProvider *dpp, optional_yield y,
       const bucket_index_layout_generation& idx_layout,
       int shard_id,
       std::string *bucket_ver, std::string *master_ver,
@@ -307,19 +309,21 @@ namespace rgw::sal {
     return 0;
   }
 
-  int DBBucket::check_index(const DoutPrefixProvider *dpp, std::map<RGWObjCategory, RGWStorageStats>& existing_stats, std::map<RGWObjCategory, RGWStorageStats>& calculated_stats)
+  int DBBucket::check_index(const DoutPrefixProvider *dpp, optional_yield y,
+                            std::map<RGWObjCategory, RGWStorageStats>& existing_stats,
+                            std::map<RGWObjCategory, RGWStorageStats>& calculated_stats)
   {
     /* XXX: stats not supported yet */
     return 0;
   }
 
-  int DBBucket::rebuild_index(const DoutPrefixProvider *dpp)
+  int DBBucket::rebuild_index(const DoutPrefixProvider *dpp, optional_yield y)
   {
     /* there is no index table in dbstore. Not applicable */
     return 0;
   }
 
-  int DBBucket::set_tag_timeout(const DoutPrefixProvider *dpp, uint64_t timeout)
+  int DBBucket::set_tag_timeout(const DoutPrefixProvider *dpp, optional_yield y, uint64_t timeout)
   {
     /* XXX: CHECK: set tag timeout for all the bucket objects? */
     return 0;
@@ -486,7 +490,21 @@ namespace rgw::sal {
     return std::make_unique<DBLuaManager>(this);
   }
 
-  int DBObject::get_obj_state(const DoutPrefixProvider* dpp, RGWObjState **pstate, optional_yield y, bool follow_olh)
+  int DBObject::list_parts(const DoutPrefixProvider* dpp, CephContext* cct,
+			   int max_parts, int marker, int* next_marker,
+			   bool* truncated, list_parts_each_t each_func,
+			   optional_yield y)
+  {
+    return -EOPNOTSUPP;
+  }
+
+  bool DBObject::is_sync_completed(const DoutPrefixProvider* dpp, optional_yield y,
+                                   const ceph::real_time& obj_mtime)
+  {
+    return false;
+  }
+
+  int DBObject::load_obj_state(const DoutPrefixProvider* dpp, optional_yield y, bool follow_olh)
   {
     RGWObjState* astate;
     DB::Object op_target(store->getDB(), get_bucket()->get_info(), get_obj());
@@ -501,7 +519,6 @@ namespace rgw::sal {
     bool prefetch_data = state.prefetch_data;
 
     state = *astate;
-    *pstate = &state;
 
     state.obj = obj;
     state.is_atomic = is_atomic;
@@ -535,7 +552,7 @@ namespace rgw::sal {
     return read_attrs(dpp, read_op, y, target_obj);
   }
 
-  int DBObject::modify_obj_attrs(const char* attr_name, bufferlist& attr_val, optional_yield y, const DoutPrefixProvider* dpp)
+  int DBObject::modify_obj_attrs(const char* attr_name, bufferlist& attr_val, optional_yield y, const DoutPrefixProvider* dpp, uint32_t flags)
   {
     rgw_obj target = get_obj();
     int r = get_obj_attrs(y, dpp, &target);
@@ -544,7 +561,7 @@ namespace rgw::sal {
     }
     set_atomic(true);
     state.attrset[attr_name] = attr_val;
-    return set_obj_attrs(dpp, &state.attrset, nullptr, y, 0);
+    return set_obj_attrs(dpp, &state.attrset, nullptr, y, flags);
   }
 
   int DBObject::delete_obj_attrs(const DoutPrefixProvider* dpp, const char* attr_name, optional_yield y)
@@ -554,7 +571,7 @@ namespace rgw::sal {
 
     set_atomic(true);
     rmattr[attr_name] = bl;
-    return set_obj_attrs(dpp, nullptr, &rmattr, y, 0);
+    return set_obj_attrs(dpp, nullptr, &rmattr, y, rgw::sal::FLAG_LOG_OP);
   }
 
   bool DBObject::is_expired() {
@@ -1217,9 +1234,11 @@ namespace rgw::sal {
     return 0;
   }
 
-  int DBMultipartWriter::complete(size_t accounted_size, const std::string& etag,
+  int DBMultipartWriter::complete(
+		       size_t accounted_size, const std::string& etag,
                        ceph::real_time *mtime, ceph::real_time set_mtime,
                        std::map<std::string, bufferlist>& attrs,
+		       const std::optional<rgw::cksum::Cksum>& cksum,
                        ceph::real_time delete_at,
                        const char *if_match, const char *if_nomatch,
                        const std::string *user_data,
@@ -1241,6 +1260,7 @@ namespace rgw::sal {
     RGWUploadPartInfo info;
     info.num = part_num;
     info.etag = etag;
+    info.cksum = cksum;
     info.size = total_data_size;
     info.accounted_size = accounted_size;
     info.modified = real_clock::now();
@@ -1375,6 +1395,7 @@ namespace rgw::sal {
   int DBAtomicWriter::complete(size_t accounted_size, const std::string& etag,
                          ceph::real_time *mtime, ceph::real_time set_mtime,
                          std::map<std::string, bufferlist>& attrs,
+			 const std::optional<rgw::cksum::Cksum>& cksum,
                          ceph::real_time delete_at,
                          const char *if_match, const char *if_nomatch,
                          const std::string *user_data,
@@ -1841,40 +1862,53 @@ namespace rgw::sal {
     return std::make_unique<DBLifecycle>(this);
   }
 
-  int DBLifecycle::get_entry(const std::string& oid, const std::string& marker,
-			      std::unique_ptr<LCEntry>* entry)
+  bool DBStore::process_expired_objects(const DoutPrefixProvider *dpp,
+		 			optional_yield y)
+  {
+    return 0;
+  }
+
+  int DBLifecycle::get_entry(const DoutPrefixProvider* dpp, optional_yield y,
+                             const std::string& oid, const std::string& marker,
+                             LCEntry& entry)
   {
     return store->getDB()->get_entry(oid, marker, entry);
   }
 
-  int DBLifecycle::get_next_entry(const std::string& oid, const std::string& marker,
-				  std::unique_ptr<LCEntry>* entry)
+  int DBLifecycle::get_next_entry(const DoutPrefixProvider* dpp, optional_yield y,
+                                  const std::string& oid, const std::string& marker,
+				  LCEntry& entry)
   {
     return store->getDB()->get_next_entry(oid, marker, entry);
   }
 
-  int DBLifecycle::set_entry(const std::string& oid, LCEntry& entry)
+  int DBLifecycle::set_entry(const DoutPrefixProvider* dpp, optional_yield y,
+                             const std::string& oid, const LCEntry& entry)
   {
     return store->getDB()->set_entry(oid, entry);
   }
 
-  int DBLifecycle::list_entries(const std::string& oid, const std::string& marker,
-  				 uint32_t max_entries, vector<std::unique_ptr<LCEntry>>& entries)
+  int DBLifecycle::list_entries(const DoutPrefixProvider* dpp, optional_yield y,
+                                const std::string& oid, const std::string& marker,
+  				 uint32_t max_entries, vector<LCEntry>& entries)
   {
     return store->getDB()->list_entries(oid, marker, max_entries, entries);
   }
 
-  int DBLifecycle::rm_entry(const std::string& oid, LCEntry& entry)
+  int DBLifecycle::rm_entry(const DoutPrefixProvider* dpp, optional_yield y,
+                            const std::string& oid, const LCEntry& entry)
   {
     return store->getDB()->rm_entry(oid, entry);
   }
 
-  int DBLifecycle::get_head(const std::string& oid, std::unique_ptr<LCHead>* head)
+  int DBLifecycle::get_head(const DoutPrefixProvider* dpp, optional_yield y,
+                            const std::string& oid, LCHead& head)
   {
     return store->getDB()->get_head(oid, head);
   }
 
-  int DBLifecycle::put_head(const std::string& oid, LCHead& head)
+  int DBLifecycle::put_head(const DoutPrefixProvider* dpp, optional_yield y,
+                            const std::string& oid, const LCHead& head)
   {
     return store->getDB()->put_head(oid, head);
   }
@@ -1886,6 +1920,11 @@ namespace rgw::sal {
     return std::make_unique<LCDBSerializer>(store, oid, lock_name, cookie);
   }
 
+  std::unique_ptr<Restore> DBStore::get_restore()
+  {
+    return nullptr;
+  }
+  
   std::unique_ptr<Notification> DBStore::get_notification(
     rgw::sal::Object* obj, rgw::sal::Object* src_obj, req_state* s,
     rgw::notify::EventType event_type, optional_yield y,

@@ -361,6 +361,77 @@ def crush_setup(ctx, config):
 
 
 @contextlib.contextmanager
+def module_setup(ctx, config):
+    cluster_name = config['cluster']
+    first_mon = teuthology.get_first_mon(ctx, config, cluster_name)
+    (mon_remote,) = ctx.cluster.only(first_mon).remotes.keys()
+
+    modules = config.get('mgr-modules', [])
+    for m in modules:
+        m = str(m)
+        cmd = [
+           'sudo',
+           'ceph',
+           '--cluster',
+           cluster_name,
+           'mgr',
+           'module',
+           'enable',
+           m,
+        ]
+        log.info("enabling module %s", m)
+        mon_remote.run(args=cmd)
+    yield
+
+
+@contextlib.contextmanager
+def conf_setup(ctx, config):
+    cluster_name = config['cluster']
+    first_mon = teuthology.get_first_mon(ctx, config, cluster_name)
+    (mon_remote,) = ctx.cluster.only(first_mon).remotes.keys()
+
+    configs = config.get('cluster-conf', {})
+    procs = []
+    for section, confs in configs.items():
+        section = str(section)
+        for k, v in confs.items():
+            k = str(k).replace(' ', '_') # pre-pacific compatibility
+            v = str(v)
+            cmd = [
+                'sudo',
+                'ceph',
+                '--cluster',
+                cluster_name,
+                'config',
+                'set',
+                section,
+                k,
+                v,
+            ]
+            log.info("setting config [%s] %s = %s", section, k, v)
+            procs.append(mon_remote.run(args=cmd, wait=False))
+    log.debug("set %d configs", len(procs))
+    for p in procs:
+        log.debug("waiting for %s", p)
+        p.wait()
+    cmd = [
+        'sudo',
+        'ceph',
+        '--cluster',
+        cluster_name,
+        'config',
+        'dump',
+    ]
+    mon_remote.run(args=cmd)
+    yield
+
+@contextlib.contextmanager
+def conf_epoch(ctx, config):
+    cm = ctx.managers[config['cluster']]
+    cm.save_conf_epoch()
+    yield
+
+@contextlib.contextmanager
 def check_enable_crimson(ctx, config):
     # enable crimson-osds if crimson
     log.info("check_enable_crimson: {}".format(is_crimson(config)))
@@ -595,7 +666,8 @@ def create_simple_monmap(ctx, remote, conf, mons,
 
 
 def is_crimson(config):
-    return config.get('flavor', 'default') == 'crimson'
+    return config.get('flavor', 'default') == 'crimson-debug' or \
+        config.get('flavor', 'default') == 'crimson-release'
 
 
 def maybe_redirect_stderr(config, type_, args, log_path):
@@ -923,7 +995,9 @@ def cluster(ctx, config):
                 try:
                     remote.run(args=['yes', run.Raw('|')] + ['sudo'] + mkfs + [dev])
                 except run.CommandFailedError:
-                    # Newer btfs-tools doesn't prompt for overwrite, use -f
+                    if fs != 'btrfs':
+                        raise
+                    # Newer btrfs-tools doesn't prompt for overwrite, use -f
                     if '-f' not in mount_options:
                         mkfs_options.append('-f')
                         mkfs = ['mkfs.%s' % fs] + mkfs_options
@@ -1451,7 +1525,8 @@ def run_daemon(ctx, config, type_):
     try:
         yield
     finally:
-        teuthology.stop_daemons_of_type(ctx, type_, cluster_name)
+        timeout = config.get('stop-daemons-timeout', 300)
+        teuthology.stop_daemons_of_type(ctx, type_, cluster_name, timeout=timeout)
 
 
 def healthy(ctx, config):
@@ -1904,7 +1979,9 @@ def task(ctx, config):
             mon_bind_addrvec=config.get('mon_bind_addrvec', True),
         )),
         lambda: run_daemon(ctx=ctx, config=config, type_='mon'),
+        lambda: module_setup(ctx=ctx, config=config),
         lambda: run_daemon(ctx=ctx, config=config, type_='mgr'),
+        lambda: conf_setup(ctx=ctx, config=config),
         lambda: crush_setup(ctx=ctx, config=config),
         lambda: check_enable_crimson(ctx=ctx, config=config),
         lambda: run_daemon(ctx=ctx, config=config, type_='osd'),
@@ -1913,6 +1990,7 @@ def task(ctx, config):
         lambda: run_daemon(ctx=ctx, config=config, type_='mds'),
         lambda: cephfs_setup(ctx=ctx, config=config),
         lambda: watchdog_setup(ctx=ctx, config=config),
+        lambda: conf_epoch(ctx=ctx, config=config),
     ]
 
     with contextutil.nested(*subtasks):

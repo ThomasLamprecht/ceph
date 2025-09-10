@@ -238,6 +238,9 @@ SEASTAR_MODULE_EXPORT_BEGIN
  * This configuration is used by the infrastructure to allocate memory for the values
  * and initialize or deinitialize them when they are created or destroyed.
  *
+ * If the type T has a member function T::rename()
+ * then it will be called after the scheduling group is renamed.
+ *
  * @tparam T - the type for the newly created value.
  * @tparam ...ConstructorArgs - the types for the constructor parameters (should be deduced)
  * @param args - The parameters for the constructor.
@@ -255,6 +258,11 @@ make_scheduling_group_key_config(ConstructorArgs... args) {
     sgkc.destructor = [] (void* p) {
         static_cast<T*>(p)->~T();
     };
+    if constexpr (requires(T key) { key.rename(); }) {
+        sgkc.rename = [] (void* p) {
+            static_cast<T*>(p)->rename();
+        };
+    }
     return sgkc;
 }
 
@@ -326,7 +334,6 @@ public:
     /// the calling shard
     float get_shares() const noexcept;
 
-#if SEASTAR_API_LEVEL >= 7
     /// \brief Updates the current IO bandwidth for a given scheduling group
     ///
     /// The bandwidth applied is NOT shard-local, instead it is applied so that
@@ -335,7 +342,6 @@ public:
     /// \param bandwidth the new bandwidth value in bytes/second
     /// \return a future that is ready when the bandwidth update is applied
     future<> update_io_bandwidth(uint64_t bandwidth) const;
-#endif
 
     friend future<scheduling_group> create_scheduling_group(sstring name, sstring shortname, float shares) noexcept;
     friend future<> destroy_scheduling_group(scheduling_group sg) noexcept;

@@ -24,7 +24,7 @@
 #include <functional>
 #include <unordered_set>
 #include <map>
-#include <boost/any.hpp>
+#include <any>
 #include <fmt/format.h>
 #endif
 
@@ -221,6 +221,11 @@ namespace tls {
          */
         void set_dn_verification_callback(dn_callback);
 
+        /**
+         * Optional override to disable certificate verification
+         */
+        void set_enable_certificate_verification(bool enable);
+
     private:
         class impl;
         friend class session;
@@ -243,7 +248,7 @@ namespace tls {
     };
 
     /**
-     * Session resumption support. 
+     * Session resumption support.
      * We only support TLS1.3 session tickets.
     */
     enum class session_resume_mode {
@@ -270,7 +275,7 @@ namespace tls {
 
         /**
          * Sets session resume mode.
-         * If session resumption is set to TLS13 session tickets, 
+         * If session resumption is set to TLS13 session tickets,
          * calling this also functions as key rotation, i.e. creates
          * a new window of TLS session keys.
         */
@@ -278,8 +283,10 @@ namespace tls {
     };
 
     class reloadable_credentials_base;
+    class credentials_builder;
 
     using reload_callback = std::function<void(const std::unordered_set<sstring>&, std::exception_ptr)>;
+    using reload_callback_ex = std::function<future<>(const credentials_builder&, const std::unordered_set<sstring>&, std::exception_ptr)>;
 
     /**
      * Intentionally "primitive", and more importantly, copyable
@@ -315,14 +322,20 @@ namespace tls {
         shared_ptr<certificate_credentials> build_certificate_credentials() const;
         shared_ptr<server_credentials> build_server_credentials() const;
 
+        void rebuild(certificate_credentials&) const;
+        void rebuild(server_credentials&) const;
+
         // same as above, but any files used for certs/keys etc will be watched
         // for modification and reloaded if changed
-        future<shared_ptr<certificate_credentials>> build_reloadable_certificate_credentials(reload_callback = {}, std::optional<std::chrono::milliseconds> tolerance = {}) const;
-        future<shared_ptr<server_credentials>> build_reloadable_server_credentials(reload_callback = {}, std::optional<std::chrono::milliseconds> tolerance = {}) const;
+        future<shared_ptr<certificate_credentials>> build_reloadable_certificate_credentials(reload_callback_ex = {}, std::optional<std::chrono::milliseconds> tolerance = {}) const;
+        future<shared_ptr<server_credentials>> build_reloadable_server_credentials(reload_callback_ex = {}, std::optional<std::chrono::milliseconds> tolerance = {}) const;
+
+        future<shared_ptr<certificate_credentials>> build_reloadable_certificate_credentials(reload_callback, std::optional<std::chrono::milliseconds> tolerance = {}) const;
+        future<shared_ptr<server_credentials>> build_reloadable_server_credentials(reload_callback, std::optional<std::chrono::milliseconds> tolerance = {}) const;
     private:
         friend class reloadable_credentials_base;
 
-        std::multimap<sstring, boost::any> _blobs;
+        std::multimap<sstring, std::any> _blobs;
         client_auth _client_auth = client_auth::NONE;
         session_resume_mode _session_resume_mode = session_resume_mode::NONE;
         sstring _priority;
@@ -337,7 +350,11 @@ namespace tls {
         /// \brief server name to be used for the SNI TLS extension
         sstring server_name = {};
 
-        /// \brief Optional session resume data. Must be retrieved via 
+        /// \brief whether server certificate should be verified. May be set to false
+        /// in test environments.
+        bool verify_certificate = true;
+
+        /// \brief Optional session resume data. Must be retrieved via
         /// get_session_resume_data below.
         session_data session_resume_data;
     };
@@ -446,15 +463,15 @@ namespace tls {
     future<std::optional<session_dn>> get_dn_information(connected_socket& socket);
 
     /**
-     * Subject alt name types. 
+     * Subject alt name types.
     */
     enum class subject_alt_name_type {
         dnsname = 1, // string value representing a 'DNS' entry
-        rfc822name, // string value representing an 'email' entry 
+        rfc822name, // string value representing an 'email' entry
         uri, // string value representing an 'uri' entry
         ipaddress, // inet_address value representing an 'IP' entry
-        othername, // string value 
-        dn, // string value 
+        othername, // string value
+        dn, // string value
     };
 
     // Subject alt name entry
@@ -471,16 +488,29 @@ namespace tls {
      * Returns the alt name entries of matching types, or all entries if 'types' is empty
      * The values are extracted from the client authentication certificate, if available.
      * If no certificate authentication is used in the connection, en empty list is returned.
-     * 
+     *
      * If the socket is not connected a system_error exception will be thrown.
      * If the socket is not a TLS socket an exception will be thrown.
     */
     future<std::vector<subject_alt_name>> get_alt_name_information(connected_socket& socket, std::unordered_set<subject_alt_name_type> types = {});
 
+    using certificate_data = std::vector<uint8_t>;
+
+    /**
+     * Get the raw certificate (chain) that the connected peer is using.
+     * This function forces the TLS handshake. If the handshake didn't happen before the
+     * call to 'get_peer_certificate_chain' it will be completed when the returned future
+     * will become ready.
+     * The function returns the certificate chain on success. If the peer didn't send the
+     * certificate during the handshake, the function returns an empty certificate chain.
+     * If the socket is not connected the system_error exception will be thrown.
+     */
+    future<std::vector<certificate_data>> get_peer_certificate_chain(connected_socket& socket);
+
     /**
      * Checks if the socket was connected using session resume.
-     * Will force handshake if not already done. 
-     * 
+     * Will force handshake if not already done.
+     *
      * If the socket is not connected a system_error exception will be thrown.
      * If the socket is not a TLS socket an exception will be thrown.
     */
@@ -488,13 +518,13 @@ namespace tls {
 
     /**
      * Get session resume data from a connected client socket. Will force handshake if not already done.
-     * 
+     *
      * If the socket is not connected a system_error exception will be thrown.
      * If the socket is not a TLS socket an exception will be thrown.
      * If no session resumption data is available, returns empty buffer.
-     * 
+     *
      * Note: TLS13 session tickets most of the time require data to have been transferred
-     * between client/server. To ensure getting the session data, it is advisable to 
+     * between client/server. To ensure getting the session data, it is advisable to
      * delay this call to sometime before shutting down/closing the socket.
     */
     future<session_data> get_session_resume_data(connected_socket&);
@@ -503,12 +533,12 @@ namespace tls {
     std::ostream& operator<<(std::ostream&, const subject_alt_name&);
 
     /**
-     * Alt name to string. 
+     * Alt name to string.
      * Note: because naming of alternative names is inconsistent between tools,
      * and because openssl is probably more popular when creating certs anyway,
      * this routine will be inconsistent with both gnutls and openssl (though more
      * in line with the latter) and name the constants as follows:
-     * 
+     *
      * dnsname: "DNS"
      * rfc822name: "EMAIL"
      * uri: "URI"
@@ -521,7 +551,7 @@ namespace tls {
 
     /**
      * Error handling.
-     * 
+     *
      * The error_category instance used by exceptions thrown by TLS
      */
     const std::error_category& error_category();

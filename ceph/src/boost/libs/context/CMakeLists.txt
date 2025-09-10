@@ -50,7 +50,7 @@ unset(_default_abi)
 
 ## Arch-and-model
 
-set(_all_archs arm arm64 loongarch64 mips32 mips64 ppc32 ppc64 riscv64 s390x i386 x86_64 combined)
+set(_all_archs arm arm64 loongarch64 mips32 mips64 power riscv64 s390x i386 x86_64 combined)
 
 # Try at start to auto determine arch from CMake.
 if(CMAKE_SYSTEM_PROCESSOR IN_LIST _all_archs)
@@ -74,7 +74,7 @@ else()
   endif()
 endif()
 
-set(BOOST_CONTEXT_ARCHITECTURE "${_default_arch}" CACHE STRING "Boost.Context architecture (arm, arm64, loongarch64, mips32, mips64, ppc32, ppc64, riscv64, s390x, i386, x86_64, combined)")
+set(BOOST_CONTEXT_ARCHITECTURE "${_default_arch}" CACHE STRING "Boost.Context architecture (arm, arm64, loongarch64, mips32, mips64, power, riscv64, s390x, i386, x86_64, combined)")
 set_property(CACHE BOOST_CONTEXT_ARCHITECTURE PROPERTY STRINGS ${_all_archs})
 
 unset(_all_archs)
@@ -168,7 +168,7 @@ unset(_asm_suffix)
 
 if(BOOST_CONTEXT_IMPLEMENTATION STREQUAL "fcontext")
 
-  set(IMPL_SOURCES ${ASM_SOURCES})
+  set(IMPL_SOURCES ${ASM_SOURCES} src/fcontext.cpp)
 
   if(BOOST_CONTEXT_ASSEMBLER STREQUAL masm AND BOOST_CONTEXT_ARCHITECTURE STREQUAL i386)
       set_source_files_properties(${ASM_SOURCES} PROPERTIES COMPILE_FLAGS "/safeseh")
@@ -214,23 +214,26 @@ target_link_libraries(boost_context
     Boost::smart_ptr
 )
 
+# ATTENTION. Some assemblers are picky to get --defsym,KEY=VALUE pairs where '=' is non-optional!
+# Be sure all defines have the '=' character. Overkill solution: always put '=' throughout this module.
+
 target_compile_definitions(boost_context
-  PUBLIC BOOST_CONTEXT_NO_LIB
-  PRIVATE BOOST_CONTEXT_SOURCE
+  PUBLIC BOOST_CONTEXT_NO_LIB=
+  PRIVATE BOOST_CONTEXT_SOURCE=
 )
 
 if(BUILD_SHARED_LIBS)
-  target_compile_definitions(boost_context PUBLIC BOOST_CONTEXT_DYN_LINK BOOST_CONTEXT_EXPORT=EXPORT)
+  target_compile_definitions(boost_context PUBLIC BOOST_CONTEXT_DYN_LINK= BOOST_CONTEXT_EXPORT=EXPORT)
 else()
-  target_compile_definitions(boost_context PUBLIC BOOST_CONTEXT_STATIC_LINK BOOST_CONTEXT_EXPORT=)
+  target_compile_definitions(boost_context PUBLIC BOOST_CONTEXT_STATIC_LINK= BOOST_CONTEXT_EXPORT=)
 endif()
 
 if(BOOST_CONTEXT_IMPLEMENTATION STREQUAL "ucontext")
-  target_compile_definitions(boost_context PUBLIC BOOST_USE_UCONTEXT)
+  target_compile_definitions(boost_context PUBLIC BOOST_USE_UCONTEXT=)
 endif()
 
 if(BOOST_CONTEXT_IMPLEMENTATION STREQUAL "winfib")
-  target_compile_definitions(boost_context PUBLIC BOOST_USE_WINFIB)
+  target_compile_definitions(boost_context PUBLIC BOOST_USE_WINFIB=)
 endif()
 
 if(BUILD_TESTING AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/test/CMakeLists.txt")

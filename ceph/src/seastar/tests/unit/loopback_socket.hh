@@ -21,6 +21,7 @@
 
 #pragma once
 
+#include <ranges>
 #include <system_error>
 #include <seastar/core/iostream.hh>
 #include <seastar/core/circular_buffer.hh>
@@ -31,6 +32,7 @@
 #include <seastar/core/do_with.hh>
 #include <seastar/net/stack.hh>
 #include <seastar/core/sharded.hh>
+#include <seastar/util/assert.hh>
 
 namespace seastar {
 
@@ -105,7 +107,7 @@ public:
     }
 
     future<> wait_input_shutdown() {
-        assert(!_shutdown.has_value());
+        SEASTAR_ASSERT(!_shutdown.has_value());
         _shutdown.emplace();
         return _shutdown->get_future();
     }
@@ -251,6 +253,7 @@ public:
 class loopback_connection_factory {
     unsigned _shard = 0;
     unsigned _shards_count;
+    unsigned _pending_capacity = 10;
     std::vector<lw_shared_ptr<queue<connected_socket>>> _pending;
 public:
     explicit loopback_connection_factory(unsigned shards_count = smp::count)
@@ -258,17 +261,24 @@ public:
     {
         _pending.resize(shards_count);
     }
+
+    static loopback_connection_factory with_pending_capacity(unsigned pending_capacity, unsigned shards_count = smp::count) {
+        auto lcf = loopback_connection_factory(shards_count);
+        lcf._pending_capacity = pending_capacity;
+        return lcf;
+    }
+
     server_socket get_server_socket() {
-       assert(this_shard_id() < _shards_count);
+       SEASTAR_ASSERT(this_shard_id() < _shards_count);
        if (!_pending[this_shard_id()]) {
-           _pending[this_shard_id()] = make_lw_shared<queue<connected_socket>>(10);
+           _pending[this_shard_id()] = make_lw_shared<queue<connected_socket>>(_pending_capacity);
        }
        return server_socket(std::make_unique<loopback_server_socket_impl>(_pending[this_shard_id()]));
     }
     future<> make_new_server_connection(foreign_ptr<lw_shared_ptr<loopback_buffer>> b1, lw_shared_ptr<loopback_buffer> b2) {
-        assert(this_shard_id() < _shards_count);
+        SEASTAR_ASSERT(this_shard_id() < _shards_count);
         if (!_pending[this_shard_id()]) {
-            _pending[this_shard_id()] = make_lw_shared<queue<connected_socket>>(10);
+            _pending[this_shard_id()] = make_lw_shared<queue<connected_socket>>(_pending_capacity);
         }
         return _pending[this_shard_id()]->push_eventually(connected_socket(std::make_unique<loopback_connected_socket_impl>(std::move(b1), b2)));
     }
@@ -279,11 +289,11 @@ public:
         return _shard++ % _shards_count;
     }
     void destroy_shard(unsigned shard) {
-        assert(shard < _shards_count);
+        SEASTAR_ASSERT(shard < _shards_count);
         _pending[shard] = nullptr;
     }
     future<> destroy_all_shards() {
-        return parallel_for_each(boost::irange(0u, _shards_count), [this](shard_id shard) {
+        return parallel_for_each(std::views::iota(0u, _shards_count), [this](shard_id shard) {
             return smp::submit_to(shard, [this] {
                 destroy_shard(this_shard_id());
             });

@@ -21,6 +21,7 @@
  */
 
 #include <seastar/core/thread.hh>
+#include <seastar/testing/random.hh>
 #include <seastar/testing/test_case.hh>
 #include <seastar/testing/thread_test_case.hh>
 #include <seastar/testing/test_runner.hh>
@@ -28,6 +29,7 @@
 #include <seastar/core/fair_queue.hh>
 #include <seastar/core/do_with.hh>
 #include <seastar/util/later.hh>
+#include <seastar/util/assert.hh>
 #include <seastar/core/sleep.hh>
 #include <seastar/core/print.hh>
 #include <boost/range/irange.hpp>
@@ -81,7 +83,14 @@ public:
     test_env(unsigned capacity)
         : _fg(fg_config(capacity), 1)
         , _fq(_fg, fq_config())
-    {}
+    {
+        // Move _fg._replenished_ts() to far future.
+        // This will prevent any `maybe_replenish_capacity` calls (indirectly done by `fair_queue::dispatch_requests()`)
+        // from replenishing tokens on its own, and ensure that the only source of replenishment will be tick().
+        //
+        // Otherwise the rate of replenishment might be greater than expected by the test, breaking the results.
+        _fg.replenish_capacity(fair_group::clock_type::now() + std::chrono::days(1));
+    }
 
     // As long as there is a request sitting in the queue, tick() will process
     // at least one request. The only situation in which tick() will return nothing
@@ -161,7 +170,7 @@ public:
     //
     // The ratios argument is the ratios towards the first class
     void verify(sstring name, std::vector<unsigned> ratios, unsigned expected_error = 1) {
-        assert(ratios.size() == _results.size());
+        SEASTAR_ASSERT(ratios.size() == _results.size());
         auto str = name + ":";
         for (auto i = 0ul; i < _results.size(); ++i) {
             str += format(" r[{:d}] = {:d}", i, _results[i]);

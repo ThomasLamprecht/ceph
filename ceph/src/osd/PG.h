@@ -179,13 +179,6 @@ public:
   /// and be removed only in the PrimaryLogPG destructor.
   std::unique_ptr<ScrubPgIF> m_scrubber;
 
-  /// flags detailing scheduling/operation characteristics of the next scrub 
-  requested_scrub_t m_planned_scrub;
-
-  const requested_scrub_t& get_planned_scrub() const {
-    return m_planned_scrub;
-  }
-
   /// scrubbing state for both Primary & replicas
   bool is_scrub_active() const { return m_scrubber->is_scrub_active(); }
 
@@ -255,6 +248,20 @@ public:
   bool is_waiting_for_unreadable_object() const final
   {
     return !waiting_for_unreadable_object.empty();
+  }
+
+  bool get_is_nonprimary_shard(const pg_shard_t &shard) const final
+  {
+    return get_pgbackend()->get_is_nonprimary_shard(shard.shard);
+  }
+
+  bool get_is_hinfo_required() const final
+  {
+    return get_pgbackend()->get_is_hinfo_required();
+  }
+
+  bool get_is_ec_optimized() const final {
+    return get_pgbackend()->get_is_ec_optimized();
   }
 
   static void set_last_scrub_stamp(
@@ -363,6 +370,9 @@ public:
   const std::set<pg_shard_t> &get_acting_recovery_backfill() const {
     return recovery_state.get_acting_recovery_backfill();
   }
+  const shard_id_set &get_acting_recovery_backfill_shard_id_set() const {
+    return recovery_state.get_acting_recovery_backfill_shard_id_set();
+  }
   bool is_acting(pg_shard_t osd) const {
     return recovery_state.is_acting(osd);
   }
@@ -423,19 +433,6 @@ public:
   {
     // a new scrub
     forward_scrub_event(&ScrubPgIF::initiate_regular_scrub, queued, "StartScrub");
-  }
-
-  /**
-   *  a special version of PG::scrub(), which:
-   *  - is initiated after repair, and
-   * (not true anymore:)
-   *  - is not required to allocate local/remote OSD scrub resources
-   */
-  void recovery_scrub(epoch_t queued, ThreadPool::TPHandle& handle)
-  {
-    // a new scrub
-    forward_scrub_event(&ScrubPgIF::initiate_scrub_after_repair, queued,
-			"AfterRepairScrub");
   }
 
   void replica_scrub(epoch_t queued,
@@ -624,7 +621,8 @@ public:
   void queue_snap_retrim(snapid_t snap);
 
   void on_backfill_reserved() override;
-  void on_backfill_canceled() override;
+  void on_backfill_suspended() override;
+  void on_recovery_cancelled() override {}
   void on_recovery_reserved() override;
 
   bool is_forced_recovery_or_backfill() const {
@@ -698,10 +696,9 @@ public:
   void shutdown();
   virtual void on_shutdown() = 0;
 
-  bool get_must_scrub() const;
-
   Scrub::schedule_result_t start_scrubbing(
-      Scrub::OSDRestrictions osd_restrictions);
+    const Scrub::SchedEntry& candidate,
+    Scrub::OSDRestrictions osd_restrictions);
 
   unsigned int scrub_requeue_priority(
       Scrub::scrub_prio_t with_priority,
@@ -712,35 +709,6 @@ public:
 private:
   // auxiliaries used by sched_scrub():
   double next_deepscrub_interval() const;
-
-  /// should we perform deep scrub?
-  bool is_time_for_deep(bool allow_deep_scrub,
-                        bool allow_shallow_scrub,
-                        bool has_deep_errors,
-                        const requested_scrub_t& planned) const;
-
-  /**
-   * Validate the various 'next scrub' flags in m_planned_scrub against configuration
-   * and scrub-related timestamps.
-   *
-   * @returns an updated copy of the m_planned_flags (or nothing if no scrubbing)
-   */
-  std::optional<requested_scrub_t> validate_scrub_mode() const;
-
-  std::optional<requested_scrub_t> validate_periodic_mode(
-    bool allow_deep_scrub,
-    bool try_to_auto_repair,
-    bool allow_shallow_scrub,
-    bool time_for_deep,
-    bool has_deep_errors,
-    const requested_scrub_t& planned) const;
-
-  std::optional<requested_scrub_t> validate_initiated_scrub(
-    bool allow_deep_scrub,
-    bool try_to_auto_repair,
-    bool time_for_deep,
-    bool has_deep_errors,
-    const requested_scrub_t& planned) const;
 
   using ScrubAPI = void (ScrubPgIF::*)(epoch_t epoch_queued);
   void forward_scrub_event(ScrubAPI fn, epoch_t epoch_queued, std::string_view desc);
@@ -916,8 +884,8 @@ protected:
   std::set<int> probe_targets;
 
 protected:
-  BackfillInterval backfill_info;
-  std::map<pg_shard_t, BackfillInterval> peer_backfill_info;
+  PrimaryBackfillInterval backfill_info;
+  std::map<pg_shard_t, ReplicaBackfillInterval> peer_backfill_info;
   bool backfill_reserving;
 
   // The primary's num_bytes and local num_bytes for this pg, only valid
@@ -1119,6 +1087,7 @@ protected:
 
   std::set<hobject_t> objects_blocked_on_cache_full;
   std::map<hobject_t,snapid_t> objects_blocked_on_degraded_snap;
+  std::map<hobject_t,snapid_t> objects_blocked_on_unreadable_snap;
   std::map<hobject_t,ObjectContextRef> objects_blocked_on_snap_promotion;
 
   // Callbacks should assume pg (and nothing else) is locked
@@ -1174,6 +1143,11 @@ protected:
     }
     void trim(const pg_log_entry_t &entry) override {
       pg->get_pgbackend()->trim(entry, t);
+    }
+    void partial_write(pg_info_t *info, eversion_t previous_version,
+                       const pg_log_entry_t &entry
+      ) override {
+      pg->get_pgbackend()->partial_write(info, previous_version, entry);
     }
   };
 
@@ -1246,8 +1220,6 @@ public:
 
   // -- scrub --
 protected:
-  bool scrub_after_recovery;
-
   int active_pushes;
 
   [[nodiscard]] bool ops_blocked_by_scrub() const;
@@ -1381,7 +1353,6 @@ protected:
   virtual void snap_trimmer_scrub_complete() = 0;
 
   void queue_recovery();
-  void queue_scrub_after_repair();
   unsigned int get_scrub_priority();
 
   bool try_flush_or_schedule_async() override;
@@ -1432,11 +1403,6 @@ public:
 
  OSDService* get_pg_osd(ScrubberPasskey) const { return osd; }
 
- requested_scrub_t& get_planned_scrub(ScrubberPasskey)
- {
-   return m_planned_scrub;
- }
-
  void force_object_missing(ScrubberPasskey,
                            const std::set<pg_shard_t>& peer,
                            const hobject_t& oid,
@@ -1445,9 +1411,9 @@ public:
    recovery_state.force_object_missing(peer, oid, version);
  }
 
- uint64_t logical_to_ondisk_size(uint64_t logical_size) const final
- {
-   return get_pgbackend()->be_get_ondisk_size(logical_size);
+ uint64_t logical_to_ondisk_size(uint64_t logical_size,
+                                 shard_id_t shard_id) const final {
+   return get_pgbackend()->be_get_ondisk_size(logical_size, shard_id_t(shard_id));
  }
 };
 

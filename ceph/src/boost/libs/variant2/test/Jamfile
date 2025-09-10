@@ -7,7 +7,8 @@
 #  http://www.boost.org/LICENSE_1_0.txt
 
 import testing ;
-import ../../config/checks/config : requires ;
+import-search /boost/config/checks ;
+import config : requires ;
 
 project
   : default-build
@@ -16,11 +17,14 @@ project
 
   : requirements
 
-    [ requires cxx11_variadic_templates cxx11_template_aliases cxx11_decltype cxx11_constexpr ]
+    <library>/boost/variant2//boost_variant2
+    <library>/boost/core//boost_core
+    <library>/boost/container_hash//boost_container_hash
 
     <toolset>msvc:<warnings-as-errors>on
     <toolset>gcc:<warnings-as-errors>on
     <toolset>clang:<warnings-as-errors>on
+
   ;
 
 run quick.cpp ;
@@ -127,7 +131,11 @@ run variant_visit_by_index.cpp ;
 run variant_ostream_insert.cpp ;
 run is_output_streamable.cpp ;
 
-local JSON = <library>/boost//json/<warnings>off "<toolset>msvc-14.0:<build>no" "<toolset>msvc-14.2:<cxxflags>-wd5104" ;
+local JSON = <library>/boost/json//boost_json/<warnings>off "<toolset>msvc-14.0:<build>no" "<toolset>msvc-14.2:<cxxflags>-wd5104" "<undefined-sanitizer>norecover:<link>static" ;
 
 run variant_json_value_from.cpp : : : $(JSON) ;
 run variant_json_value_to.cpp : : : $(JSON) ;
+
+compile variant_uses_double_storage.cpp ;
+
+run variant_derived_construct2.cpp ;

@@ -26,6 +26,7 @@
 #include <seastar/http/file_handler.hh>
 #include <seastar/core/seastar.hh>
 #include <seastar/core/reactor.hh>
+#include <seastar/core/app-template.hh>
 #include "demo.json.hh"
 #include <seastar/http/api_docs.hh>
 #include <seastar/core/thread.hh>
@@ -73,8 +74,6 @@ void set_routes(routes& r) {
 }
 
 int main(int ac, char** av) {
-    httpd::http_server_control prometheus_server;
-    prometheus::config pctx;
     app_template app;
 
     app.add_options()("port", bpo::value<uint16_t>()->default_value(10000), "HTTP Server port");

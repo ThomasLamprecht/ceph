@@ -37,6 +37,7 @@
 #include <seastar/core/thread_impl.hh>
 #include <seastar/core/function_traits.hh>
 #include <seastar/core/shard_id.hh>
+#include <seastar/util/assert.hh>
 #include <seastar/util/critical_alloc_section.hh>
 #include <seastar/util/noncopyable_function.hh>
 #include <seastar/util/backtrace.hh>
@@ -286,24 +287,19 @@ using maybe_wrap_ref = std::conditional_t<std::is_reference_v<T>, std::reference
 ///
 /// This is similar to a std::optional<T>, but it doesn't know if it is holding a value or not, so the user is
 /// responsible for calling constructors and destructors.
-///
-/// The advantage over just using a union directly is that this uses inheritance when possible and so benefits from the
-/// empty base optimization.
-template <typename T, bool is_trivial_class>
-struct uninitialized_wrapper_base;
 
 template <typename T>
-struct uninitialized_wrapper_base<T, false> {
+struct uninitialized_wrapper {
     using tuple_type = future_tuple_type_t<T>;
-    union any {
+    [[no_unique_address]] union any {
         any() noexcept {}
         ~any() {}
         // T can be a reference, so wrap it.
-        maybe_wrap_ref<T> value;
+        [[no_unique_address]] maybe_wrap_ref<T> value;
     } _v;
 
 public:
-    uninitialized_wrapper_base() noexcept = default;
+    uninitialized_wrapper() noexcept = default;
     template<typename... U>
     std::enable_if_t<!std::is_same_v<std::tuple<std::remove_cv_t<U>...>, std::tuple<tuple_type>>, void>
     uninitialized_set(U&&... vs) {
@@ -323,42 +319,26 @@ public:
     }
 };
 
-template <typename T> struct uninitialized_wrapper_base<T, true> : private T {
-    using tuple_type = future_tuple_type_t<T>;
-    uninitialized_wrapper_base() noexcept = default;
-    template<typename... U>
-    std::enable_if_t<!std::is_same_v<std::tuple<std::remove_cv_t<U>...>, std::tuple<tuple_type>>, void>
-    uninitialized_set(U&&... vs) {
-        new (this) T(std::forward<U>(vs)...);
+template <>
+struct uninitialized_wrapper<internal::monostate> {
+    [[no_unique_address]] internal::monostate _v;
+public:
+    uninitialized_wrapper() noexcept = default;
+    void uninitialized_set() {
     }
-    void uninitialized_set(tuple_type&& v) {
-        if constexpr (std::tuple_size_v<tuple_type> != 0) {
-            uninitialized_set(std::move(std::get<0>(v)));
-        }
+    void uninitialized_set(internal::monostate) {
     }
-    void uninitialized_set(const tuple_type& v) {
-        if constexpr (std::tuple_size_v<tuple_type> != 0) {
-            uninitialized_set(std::get<0>(v));
-        }
+    void uninitialized_set(std::tuple<>&& v) {
     }
-    T& uninitialized_get() {
-        return *this;
+    void uninitialized_set(const std::tuple<>& v) {
     }
-    const T& uninitialized_get() const {
-        return *this;
+    internal::monostate& uninitialized_get() {
+        return _v;
+    }
+    const internal::monostate& uninitialized_get() const {
+        return _v;
     }
 };
-
-template <typename T>
-constexpr bool can_inherit =
-        (std::is_trivially_destructible_v<T> && std::is_trivially_constructible_v<T> &&
-                std::is_class_v<T> && !std::is_final_v<T>);
-
-// The objective is to avoid extra space for empty types like std::tuple<>. We could use std::is_empty_v, but it is
-// better to check that both the constructor and destructor can be skipped.
-template <typename T>
-struct uninitialized_wrapper
-    : public uninitialized_wrapper_base<T, can_inherit<T>> {};
 
 template <typename T>
 struct is_trivially_move_constructible_and_destructible {
@@ -437,7 +417,7 @@ struct future_state_base {
         any(state s) noexcept { st = s; }
         void set_exception(std::exception_ptr&& e) noexcept {
             new (&ex) std::exception_ptr(std::move(e));
-            assert(st >= state::exception_min);
+            SEASTAR_ASSERT(st >= state::exception_min);
         }
         any(std::exception_ptr&& e) noexcept {
             set_exception(std::move(e));
@@ -527,21 +507,21 @@ public:
     void ignore() noexcept;
 
     void set_exception(std::exception_ptr&& ex) noexcept {
-        assert(_u.st == state::future);
+        SEASTAR_ASSERT(_u.st == state::future);
         _u.set_exception(std::move(ex));
     }
     future_state_base& operator=(future_state_base&& x) noexcept = default;
     void set_exception(future_state_base&& state) noexcept {
-        assert(_u.st == state::future);
+        SEASTAR_ASSERT(_u.st == state::future);
         *this = std::move(state);
     }
     std::exception_ptr get_exception() && noexcept {
-        assert(_u.st >= state::exception_min);
+        SEASTAR_ASSERT(_u.st >= state::exception_min);
         // Move ex out so future::~future() knows we've handled it
         return _u.take_exception();
     }
     const std::exception_ptr& get_exception() const& noexcept {
-        assert(_u.st >= state::exception_min);
+        SEASTAR_ASSERT(_u.st >= state::exception_min);
         return _u.ex;
     }
     template <typename U>
@@ -628,7 +608,7 @@ struct future_state :  public future_state_base, private internal::uninitialized
     }
     template <typename... A>
     void set(A&&... a) noexcept {
-        assert(_u.st == state::future);
+        SEASTAR_ASSERT(_u.st == state::future);
         new (this) future_state(ready_future_marker(), std::forward<A>(a)...);
     }
     future_state(exception_future_marker, std::exception_ptr&& ex) noexcept : future_state_base(std::move(ex)) { }
@@ -637,21 +617,21 @@ struct future_state :  public future_state_base, private internal::uninitialized
     future_state(nested_exception_marker m, future_state_base&& old) noexcept : future_state_base(m, std::move(old)) { }
     future_state(nested_exception_marker m, future_state_base&& n, future_state_base&& old) noexcept : future_state_base(m, std::move(n), std::move(old)) { }
     T&& get_value() && noexcept {
-        assert(_u.st == state::result);
+        SEASTAR_ASSERT(_u.st == state::result);
         return static_cast<T&&>(this->uninitialized_get());
     }
     T&& take_value() && noexcept {
-        assert(_u.st == state::result);
+        SEASTAR_ASSERT(_u.st == state::result);
         _u.st = state::result_unavailable;
         return static_cast<T&&>(this->uninitialized_get());
     }
     template<typename U = T>
     const std::enable_if_t<std::is_copy_constructible_v<U>, U>& get_value() const& noexcept(copy_noexcept) {
-        assert(_u.st == state::result);
+        SEASTAR_ASSERT(_u.st == state::result);
         return this->uninitialized_get();
     }
     T&& take() && {
-        assert(available());
+        SEASTAR_ASSERT(available());
         if (_u.st >= state::exception_min) {
             std::move(*this).rethrow_exception();
         }
@@ -659,14 +639,14 @@ struct future_state :  public future_state_base, private internal::uninitialized
         return static_cast<T&&>(this->uninitialized_get());
     }
     T&& get() && {
-        assert(available());
+        SEASTAR_ASSERT(available());
         if (_u.st >= state::exception_min) {
             std::move(*this).rethrow_exception();
         }
         return static_cast<T&&>(this->uninitialized_get());
     }
     const T& get() const& {
-        assert(available());
+        SEASTAR_ASSERT(available());
         if (_u.st >= state::exception_min) {
             rethrow_exception();
         }
@@ -889,7 +869,7 @@ public:
             // FIXME: This is a fairly expensive assert. It would be a
             // good candidate for being disabled in release builds if
             // we had such an assert.
-            assert(ptr->_u.st == future_state_base::state::future);
+            SEASTAR_ASSERT(ptr->_u.st == future_state_base::state::future);
             new (ptr) future_state(std::move(state));
             make_ready<urgent::yes>();
         }
@@ -1264,7 +1244,7 @@ private:
             : _state(std::move(state)) {
     }
     internal::promise_base_with_type<T> get_promise() noexcept {
-        assert(!_promise);
+        SEASTAR_ASSERT(!_promise);
         return internal::promise_base_with_type<T>(this);
     }
     internal::promise_base_with_type<T>* detach_promise() noexcept {
@@ -1378,7 +1358,7 @@ public:
     /// Wait for the future to be available (in a seastar::thread)
     ///
     /// When called from a seastar::thread, this function blocks the
-    /// thread until the future is availble. Other threads and
+    /// thread until the future is available. Other threads and
     /// continuations continue to execute; only the thread is blocked.
     void wait() noexcept {
         if (_state.available()) {
@@ -1397,7 +1377,7 @@ public:
 
     /// \brief Checks whether the future has failed.
     ///
-    /// \return \c true if the future is availble and has failed.
+    /// \return \c true if the future is available and has failed.
     [[gnu::always_inline]]
     bool failed() const noexcept {
         return _state.failed();
@@ -1632,7 +1612,7 @@ public:
      * If the original return value or the callback return value is an
      * exceptional future it will be propagated.
      *
-     * If both of them are exceptional - the std::nested_exception exception
+     * If both of them are exceptional - the seastar::nested_exception exception
      * with the callback exception on top and the original future exception
      * nested will be propagated.
      */
@@ -1773,7 +1753,7 @@ public:
 
 private:
     void set_task(task& t) noexcept {
-        assert(_promise);
+        SEASTAR_ASSERT(_promise);
         _promise->set_task(&t);
     }
 
@@ -1782,7 +1762,7 @@ private:
             callback->set_state(get_available_state_ref());
             ::seastar::schedule(callback);
         } else {
-            assert(_promise);
+            SEASTAR_ASSERT(_promise);
             schedule(callback);
         }
 
@@ -1926,7 +1906,7 @@ template <typename T>
 inline
 future<T>
 promise<T>::get_future() noexcept {
-    assert(!this->_future && this->_state && !this->_task);
+    SEASTAR_ASSERT(!this->_future && this->_state && !this->_task);
     return future<T>(this);
 }
 

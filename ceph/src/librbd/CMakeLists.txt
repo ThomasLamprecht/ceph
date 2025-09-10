@@ -77,6 +77,7 @@ set(librbd_internal_srcs
   exclusive_lock/PostAcquireRequest.cc
   exclusive_lock/PreReleaseRequest.cc
   exclusive_lock/StandardPolicy.cc
+  group/ListSnapshotsRequest.cc
   image/AttachChildRequest.cc
   image/AttachParentRequest.cc
   image/CloneRequest.cc
@@ -354,7 +355,7 @@ endif()
 if(ENABLE_SHARED)
   set_target_properties(librbd PROPERTIES
     OUTPUT_NAME rbd
-    VERSION 1.19.0
+    VERSION 1.20.0
     SOVERSION 1
     CXX_VISIBILITY_PRESET hidden
     VISIBILITY_INLINES_HIDDEN ON)

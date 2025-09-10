@@ -19,6 +19,8 @@
  * Copyright (C) 2016 ScyllaDB
  */
 
+#include <fmt/core.h>
+#include <fmt/ostream.h>
 #include <seastar/core/prometheus.hh>
 #include <google/protobuf/io/coded_stream.h>
 #include <google/protobuf/io/zero_copy_stream_impl_lite.h>
@@ -26,6 +28,7 @@
 #include <sstream>
 
 #include <seastar/core/metrics_api.hh>
+#include <seastar/core/scollectd.hh>
 #include <seastar/http/function_handlers.hh>
 #include <boost/algorithm/string/replace.hpp>
 #include <boost/range/algorithm_ext/erase.hpp>
@@ -34,7 +37,10 @@
 #include <boost/range/combine.hpp>
 #include <seastar/core/thread.hh>
 #include <seastar/core/loop.hh>
+#include <seastar/util/assert.hh>
+#include <ranges>
 #include <regex>
+#include <string_view>
 
 namespace seastar {
 
@@ -197,40 +203,60 @@ static void fill_metric(pm::MetricFamily& mf, const metrics::impl::metric_value&
     }
 }
 
-static std::string to_str(seastar::metrics::impl::data_type dt) {
+static std::ostream& operator<<(std::ostream& os, seastar::metrics::impl::data_type dt) {
     switch (dt) {
     case seastar::metrics::impl::data_type::GAUGE:
-        return "gauge";
+        return os << "gauge";
     case seastar::metrics::impl::data_type::COUNTER:
     case seastar::metrics::impl::data_type::REAL_COUNTER:
-        return "counter";
+        return os << "counter";
     case seastar::metrics::impl::data_type::HISTOGRAM:
-        return "histogram";
+        return os << "histogram";
     case seastar::metrics::impl::data_type::SUMMARY:
-        return "summary";
+        return os << "summary";
     }
-    return "untyped";
+    return os << "untyped";
 }
 
-static std::string to_str(const seastar::metrics::impl::metric_value& v) {
+static std::ostream& operator<<(std::ostream& os, const seastar::metrics::impl::metric_value& v) {
     switch (v.type()) {
     case seastar::metrics::impl::data_type::GAUGE:
     case seastar::metrics::impl::data_type::REAL_COUNTER:
-        return std::to_string(v.d());
+        fmt::print(os, "{:.6f}", v.d());
+        break;
     case seastar::metrics::impl::data_type::COUNTER:
-        return std::to_string(v.i());
+        fmt::print(os, "{}", v.i());
+        break;
     case seastar::metrics::impl::data_type::HISTOGRAM:
     case seastar::metrics::impl::data_type::SUMMARY:
         break;
     }
-    return ""; // we should never get here but it makes the compiler happy
+    return os;
+}
+
+/*
+ * Sanitizes the prometheus label value as per the line format rules and writes it out to the ostream:
+ * > label_value can be any sequence of UTF-8 characters, but the backslash (\), double-quote ("), and
+ * > line feed (\n) characters have to be escaped as \\, \", and \n, respectively.
+ */
+static void escape_and_write_label_value(std::ostream& s, std::string_view label_value) {
+    for (char c : label_value) {
+        switch (c) {
+            case '\\': s << R"(\\)"; break;
+            case '\"': s << R"(\")"; break;
+            case '\n': s << R"(\n)"; break;
+            default:   s << c;
+        }
+    }
 }
 
 static void add_name(std::ostream& s, const sstring& name, const std::map<sstring, sstring>& labels, const config& ctx) {
     s << name << "{";
     const char* delimiter = "";
     if (ctx.label) {
-        s << ctx.label->key()  << "=\"" << ctx.label->value() << '"';
+        s << ctx.label->key()  << "=\"";
+        escape_and_write_label_value(s, ctx.label->value());
+        s << '"';
         delimiter = ",";
     }
 
@@ -238,7 +264,9 @@ static void add_name(std::ostream& s, const sstring& name, const std::map<sstrin
         for (auto l : labels) {
             if (!boost::algorithm::starts_with(l.first, "__")) {
                 s << delimiter;
-                s << l.first  << "=\"" << l.second << '"';
+                s << l.first  << "=\"";
+                escape_and_write_label_value(s, l.second);
+                s << '"';
                 delimiter = ",";
             }
         }
@@ -375,7 +403,7 @@ public:
 
 static future<> get_map_value(metrics_families_per_shard& vec) {
     vec.resize(smp::count);
-    return parallel_for_each(boost::irange(0u, smp::count), [&vec] (auto cpu) {
+    return parallel_for_each(std::views::iota(0u, smp::count), [&vec] (auto cpu) {
         return smp::submit_to(cpu, [] {
             return mi::get_values();
         }).then([&vec, cpu] (auto res) {
@@ -417,7 +445,7 @@ public:
         return *_family_info;
     }
 
-    void foreach_metric(std::function<void(const mi::metric_value&, const mi::metric_info&)>&& f);
+    void foreach_metric(std::function<void(const mi::metric_value&, const mi::metric_series_metadata&)>&& f);
 
     bool end() const {
         return !_name || !_family_info;
@@ -534,7 +562,7 @@ public:
         return _positions.empty() || _info.end();
     }
 
-    void foreach_metric(std::function<void(const mi::metric_value&, const mi::metric_info&)>&& f) {
+    void foreach_metric(std::function<void(const mi::metric_value&, const mi::metric_series_metadata&)>&& f) {
         // iterating over the shard vector and the position vector
         for (auto&& i : boost::combine(_positions, _families)) {
             auto& pos_in_metric_per_shard = boost::get<0>(i);
@@ -560,7 +588,7 @@ public:
 
 };
 
-void metric_family::foreach_metric(std::function<void(const mi::metric_value&, const mi::metric_info&)>&& f) {
+void metric_family::foreach_metric(std::function<void(const mi::metric_value&, const mi::metric_series_metadata&)>&& f) {
     _iterator_state.foreach_metric(std::move(f));
 }
 
@@ -719,20 +747,19 @@ public:
     }
 };
 
-std::string get_value_as_string(std::stringstream& s, const mi::metric_value& value) noexcept {
+void write_value_as_string(std::stringstream& s, const mi::metric_value& value) noexcept {
     std::string value_str;
     try {
-        value_str = to_str(value);
+        s << value;
     } catch (const std::range_error& e) {
-        seastar_logger.debug("prometheus: get_value_as_string: {}: {}", s.str(), e.what());
-        value_str = "NaN";
+        seastar_logger.debug("prometheus: write_value_as_string: {}: {}", s.str(), e.what());
+        s << "NaN";
     } catch (...) {
         auto ex = std::current_exception();
         // print this error as it's ignored later on by `connection::start_response`
-        seastar_logger.error("prometheus: get_value_as_string: {}: {}", s.str(), ex);
+        seastar_logger.error("prometheus: write_value_as_string: {}: {}", s.str(), ex);
         std::rethrow_exception(std::move(ex));
     }
-    return value_str;
 }
 
 future<> write_text_representation(output_stream<char>& out, const config& ctx, const metric_family_range& m, bool show_help, bool enable_aggregation, std::function<bool(const mi::labels_type&)> filter) {
@@ -744,28 +771,29 @@ future<> write_text_representation(output_stream<char>& out, const config& ctx, 
             found = false;
             metric_aggregate_by_labels aggregated_values(metric_family.metadata().aggregate_labels);
             bool should_aggregate = enable_aggregation && !metric_family.metadata().aggregate_labels.empty();
-            metric_family.foreach_metric([&s, &out, &ctx, &found, &name, &metric_family, &aggregated_values, should_aggregate, show_help, &filter](const mi::metric_value& value, const mi::metric_info& value_info) mutable {
+            metric_family.foreach_metric([&s, &out, &ctx, &found, &name, &metric_family, &aggregated_values, should_aggregate, show_help, &filter](const mi::metric_value& value, const mi::metric_series_metadata& value_info) mutable {
                 s.clear();
                 s.str("");
-                if ((value_info.should_skip_when_empty && value.is_empty()) || !filter(value_info.id.labels())) {
+                if ((value_info.should_skip_when_empty() && value.is_empty()) || !filter(value_info.labels())) {
                     return;
                 }
                 if (!found) {
                     if (show_help && metric_family.metadata().d.str() != "") {
                         s << "# HELP " << name << " " <<  metric_family.metadata().d.str() << '\n';
                     }
-                    s << "# TYPE " << name << " " << to_str(metric_family.metadata().type) << '\n';
+                    s << "# TYPE " << name << " " << metric_family.metadata().type << '\n';
                     found = true;
                 }
                 if (should_aggregate) {
-                    aggregated_values.add(value, value_info.id.labels());
+                    aggregated_values.add(value, value_info.labels());
                 } else if (value.type() == mi::data_type::SUMMARY) {
-                    write_summary(s, ctx, name, value.get_histogram(), value_info.id.labels());
+                    write_summary(s, ctx, name, value.get_histogram(), value_info.labels());
                 } else if (value.type() == mi::data_type::HISTOGRAM) {
-                    write_histogram(s, ctx, name, value.get_histogram(), value_info.id.labels());
+                    write_histogram(s, ctx, name, value.get_histogram(), value_info.labels());
                 } else {
-                    add_name(s, name, value_info.id.labels(), ctx);
-                    s << get_value_as_string(s, value) << '\n';
+                    add_name(s, name, value_info.labels(), ctx);
+                    write_value_as_string(s, value);
+                    s << '\n';
                 }
                 out.write(s.str()).get();
                 thread::maybe_yield();
@@ -778,7 +806,8 @@ future<> write_text_representation(output_stream<char>& out, const config& ctx, 
                         write_histogram(s, ctx, name, h.second.get_histogram(), h.first);
                     } else {
                         add_name(s, name, h.first, ctx);
-                        s << get_value_as_string(s, h.second) << '\n';
+                        write_value_as_string(s, h.second);
+                        s << '\n';
                     }
                     out.write(s.str()).get();
                     thread::maybe_yield();
@@ -799,14 +828,14 @@ future<> write_protobuf_representation(output_stream<char>& out, const config& c
         bool empty_metric = true;
         mtf.set_name(fmt::format("{}_{}", ctx.prefix, name));
         mtf.mutable_metric()->Reserve(metric_family.size());
-        metric_family.foreach_metric([&mtf, &ctx, &filter, &aggregated_values, &empty_metric, should_aggregate](auto value, auto value_info) {
-            if ((value_info.should_skip_when_empty && value.is_empty()) || !filter(value_info.id.labels())) {
+        metric_family.foreach_metric([&mtf, &ctx, &filter, &aggregated_values, &empty_metric, should_aggregate](const auto& value, const auto& value_info) {
+            if ((value_info.should_skip_when_empty() && value.is_empty()) || !filter(value_info.labels())) {
                 return;
             }
             if (should_aggregate) {
-                aggregated_values.add(value, value_info.id.labels());
+                aggregated_values.add(value, value_info.labels());
             } else {
-                fill_metric(mtf, value, value_info.id.labels(), ctx);
+                fill_metric(mtf, value, value_info.labels(), ctx);
                 empty_metric = false;
             }
         });
@@ -855,7 +884,7 @@ class metrics_handler : public httpd::handler_base  {
             // This assert is obviously true. It is in here just to
             // silence a bogus gcc warning:
             // https://gcc.gnu.org/bugzilla/show_bug.cgi?id=89337
-            assert(name.length() >= 3);
+            SEASTAR_ASSERT(name.length() >= 3);
             name.resize(name.length() - 3);
             return true;
         }

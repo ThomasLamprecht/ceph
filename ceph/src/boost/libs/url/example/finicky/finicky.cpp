@@ -18,16 +18,19 @@
 
 #include <boost/url/url.hpp>
 #include <boost/url/parse.hpp>
+#include <boost/system/result.hpp>
 #include <boost/json/stream_parser.hpp>
+#include <boost/core/detail/string_view.hpp>
 #include <boost/regex.hpp>
 #include <iostream>
 #include <fstream>
 
 namespace urls = boost::urls;
 namespace json = boost::json;
+namespace core = boost::core;
 
 json::value
-read_json( std::istream& is, json::error_code& ec )
+read_json( std::istream& is, boost::system::error_code& ec )
 {
     json::parse_options opt;
     opt.allow_comments = true;
@@ -47,8 +50,8 @@ read_json( std::istream& is, json::error_code& ec )
 
 bool
 glob_match(
-    urls::string_view pattern,
-    urls::string_view str)
+    core::string_view pattern,
+    core::string_view str)
 {
     // regex
     if (str.starts_with("/") &&
@@ -112,7 +115,7 @@ url_match(
     else if (mv.is_object())
     {
         json::object& m = mv.as_object();
-        std::pair<urls::string_view, urls::string_view>
+        std::pair<core::string_view, core::string_view>
             field_values[] = {
                 {"protocol",  u.scheme()},
                 {"authority", u.encoded_authority()},
@@ -166,14 +169,14 @@ int main(int argc, char** argv)
     }
 
     // Parse url
-    urls::result<urls::url> ru = urls::parse_uri(argv[2]);
+    boost::system::result<urls::url> ru = urls::parse_uri(argv[2]);
     CHECK(ru, "Invalid URL");
     urls::url u = *ru;
 
     // Open config file
     std::fstream fin(argv[1]);
     CHECK(fin.good(), "Cannot open configuration file");
-    json::error_code ec;
+    boost::system::error_code ec;
     json::value c = read_json(fin, ec);
     CHECK(!ec.failed(), "Cannot parse configuration file");
     CHECK(c.is_object(), "Configuration file is not an object");

@@ -72,6 +72,52 @@ options:
   default: 30
   services:
   - mon
+- name: mon_nvmeofgw_beacon_grace
+  type: secs
+  level: advanced
+  desc: Period in seconds from last beacon to monitor marking a  NVMeoF gateway as
+    failed
+  default: 10
+  services:
+  - mon
+- name: mon_nvmeofgw_skip_failovers_interval
+  type: secs
+  level: advanced
+  desc: Period in seconds in which no failovers are performed in GW's pool-group
+    this is equal to max GW redeploy interval
+  default: 16
+  services:
+  - mon
+- name: mon_nvmeofgw_set_group_id_retry
+  type: uint
+  level: advanced
+  desc: Retry wait time in microsecond for set group id between the monitor client
+    and gateway
+  long_desc: The monitor server determines the gateway's group ID. If the monitor client
+    receives a monitor group ID assignment before the gateway is fully up during
+    initialization, a retry is required.
+  default: 1000
+- name: mon_nvmeofgw_beacons_till_ack
+  type: uint
+  level: advanced
+  default: 15
+  desc: Number of beacons from MonClient before NVMeofGwMon sends ack-map to it
+  services:
+  - mon
+- name: mon_nvmeofgw_delete_grace
+  type: secs
+  level: advanced
+  desc: Issue NVMEOF_GATEWAY_DELETING health warning after this amount of time has elapsed 
+  default: 15_min
+  services:
+  - mon
+- name: mon_nvmeofgw_wrong_map_ignore_sec
+  type: uint
+  level: advanced
+  desc: Period in seconds from MonClient startup to ignore wrong maps from Monitor
+  default: 15
+  services:
+  - mon
 - name: mon_mgr_inactive_grace
   type: int
   level: advanced
@@ -1260,14 +1306,6 @@ options:
   services:
   - mon
   with_legacy: true
-- name: mon_osd_max_creating_pgs
-  type: int
-  level: advanced
-  desc: maximum number of PGs the mon will create at once
-  default: 1024
-  services:
-  - mon
-  with_legacy: true
 - name: mon_osd_max_initial_pgs
   type: int
   level: advanced
@@ -1349,3 +1387,29 @@ options:
   with_legacy: true
   see_also:
   - osd_heartbeat_use_min_delay_socket
+- name: nvmeof_mon_client_disconnect_panic
+  type: secs
+  level: advanced
+  desc: The duration, expressed in seconds, after which the nvmeof gateway
+    should trigger a panic if it loses connection to the monitor
+  default: 100
+  services:
+  - mon
+- name: nvmeof_mon_client_tick_period
+  type: secs
+  level: advanced
+  desc: Period in seconds of nvmeof gateway beacon messages to monitor
+  default: 2
+  services:
+  - mon
+- name: enable_availability_tracking
+  type: bool
+  level: advanced
+  desc: Calculate and store availablity score for each pool in the 
+    cluster at regular intervals
+  default: true
+  services :
+  - mon
+  flags:
+  - runtime
+ 

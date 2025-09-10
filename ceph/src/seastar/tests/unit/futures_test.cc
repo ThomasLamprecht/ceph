@@ -19,12 +19,12 @@
  * Copyright (C) 2014 Cloudius Systems, Ltd.
  */
 
-#include "seastar/core/loop.hh"
 #include <boost/test/tools/old/interface.hpp>
 #include <cstddef>
-#include <exception>
 #include <forward_list>
 #include <iterator>
+#include <ranges>
+#include <stdexcept>
 #include <type_traits>
 #include <vector>
 #include <seastar/testing/test_case.hh>
@@ -32,7 +32,9 @@
 #include <seastar/core/reactor.hh>
 #include <seastar/core/shared_ptr.hh>
 #include <seastar/core/future-util.hh>
+#include <seastar/core/loop.hh>
 #include <seastar/core/sleep.hh>
+#include <seastar/core/smp.hh>
 #include <seastar/core/stream.hh>
 #include <seastar/util/backtrace.hh>
 #include <seastar/core/do_with.hh>
@@ -43,6 +45,7 @@
 #include <seastar/core/when_any.hh>
 #include <seastar/core/when_all.hh>
 #include <seastar/core/gate.hh>
+#include <seastar/util/assert.hh>
 #include <seastar/util/log.hh>
 #include <seastar/util/later.hh>
 #include <boost/iterator/counting_iterator.hpp>
@@ -52,8 +55,9 @@
 #include <boost/range/irange.hpp>
 
 #include <seastar/core/internal/api-level.hh>
-#include <stdexcept>
 #include <unistd.h>
+
+#include "expected_exception.hh"
 
 using namespace seastar;
 using namespace std::chrono_literals;
@@ -68,11 +72,6 @@ static_assert(std::is_nothrow_copy_constructible_v<shared_future<>>);
 static_assert(std::is_nothrow_move_constructible_v<shared_future<>>);
 
 static_assert(std::is_nothrow_move_constructible_v<shared_promise<>>);
-
-class expected_exception : public std::runtime_error {
-public:
-    expected_exception() : runtime_error("expected") {}
-};
 
 #if defined(__clang__) || (defined(__GNUC__) && __GNUC__ >= 13)
 #pragma GCC diagnostic push
@@ -536,17 +535,30 @@ SEASTAR_TEST_CASE(test_when_all_iterator_range) {
 
 template<typename Container>
 void test_iterator_range_estimate() {
-    using iter_traits = std::iterator_traits<typename Container::iterator>;
     Container container{1,2,3};
 
     BOOST_REQUIRE_EQUAL(internal::iterator_range_estimate_vector_capacity(
-        container.begin(), container.end(), typename iter_traits::iterator_category{}), 3);
+        container.begin(), container.end()), 3);
 }
 
 BOOST_AUTO_TEST_CASE(test_iterator_range_estimate_vector_capacity) {
     test_iterator_range_estimate<std::vector<int>>();
     test_iterator_range_estimate<std::list<int>>();
     test_iterator_range_estimate<std::forward_list<int>>();
+    {
+        int n = 42;
+        auto seq = std::views::iota(0, n);
+        BOOST_REQUIRE_EQUAL(internal::iterator_range_estimate_vector_capacity(
+            seq.begin(), seq.end()), n);
+    }
+    {
+        // for ranges that generate elements on-the-fly, advancing an iterator
+        // might actually consume or transform the underlying sequence, in this
+        // case, the function under test returns 0.
+        auto seq = std::views::iota(1);
+        BOOST_REQUIRE_EQUAL(internal::iterator_range_estimate_vector_capacity(
+            seq.begin(), seq.end()), 0);
+    }
 }
 
 // helper function for when_any tests
@@ -554,8 +566,8 @@ template<typename Container>
 future<> when_all_but_one_succeed(Container& futures, size_t leave_out)
 {
     auto sz = futures.size();
-    assert(sz >= 1);
-    assert(leave_out < sz);
+    SEASTAR_ASSERT(sz >= 1);
+    SEASTAR_ASSERT(leave_out < sz);
     std::vector<future<size_t>> all_but_one_tmp;
     all_but_one_tmp.reserve(sz - 1);
     for (size_t i = 0 ; i < sz; i++){
@@ -1010,7 +1022,7 @@ SEASTAR_TEST_CASE(test_parallel_for_each) {
 
 SEASTAR_TEST_CASE(test_parallel_for_each_early_failure) {
     return do_with(0, [] (int& counter) {
-        return parallel_for_each(boost::irange(0, 11000), [&counter] (int i) {
+        return parallel_for_each(std::views::iota(0, 11000), [&counter] (int i) {
             using namespace std::chrono_literals;
             // force scheduling
             return sleep((i % 31 + 1) * 1ms).then([&counter, i] {
@@ -1037,7 +1049,7 @@ SEASTAR_TEST_CASE(test_parallel_for_each_early_failure) {
 
 SEASTAR_TEST_CASE(test_parallel_for_each_waits_for_all_fibers_even_if_one_of_them_failed) {
     auto can_exit = make_lw_shared<bool>(false);
-    return parallel_for_each(boost::irange(0, 2), [can_exit] (int i) {
+    return parallel_for_each(std::views::iota(0, 2), [can_exit] (int i) {
         return yield().then([i, can_exit] {
             if (i == 1) {
                 throw expected_exception();

@@ -8,9 +8,10 @@
 #define BOOST_TEST_MAIN
 #include <boost/test/unit_test.hpp>
 #include <boost/test/tools/floating_point_comparison.hpp>
+#include <boost/math/special_functions/beta.hpp>
 #include <boost/math/special_functions/math_fwd.hpp>
 #include <boost/math/tools/stats.hpp>
-#include <boost/math/tools/test.hpp>
+#include "../include_private/boost/math/tools/test.hpp"
 #include <boost/math/constants/constants.hpp>
 #include <boost/type_traits/is_floating_point.hpp>
 #include <boost/array.hpp>
@@ -458,5 +459,15 @@ void test_spots(T)
             static_cast<T>(4.5),
             ldexp(static_cast<T>(1), -557)),
          static_cast<T>(5.24647512910420109893867082626308082567071751558842352760e-167L), tolerance * 20);
+
+
+      T tiny = boost::math::tools::min_value<T>() / 2;
+      T small = boost::math::tools::epsilon<T>();
+      if (tiny != 0)
+      {
+         BOOST_CHECK_EQUAL(boost::math::ibeta(tiny, small, small), 1);
+      }
+      BOOST_CHECK_EQUAL(boost::math::ibeta(static_cast<T>(2), static_cast<T>(1), static_cast<T>(0)), 0);
+      BOOST_CHECK_EQUAL(boost::math::ibeta(static_cast<T>(1), static_cast<T>(2), static_cast<T>(0)), 0);
 }
 

@@ -1,11 +1,10 @@
-import { Component, OnInit, TemplateRef, ViewChild } from '@angular/core';
-import { AbstractControl, UntypedFormControl, ValidationErrors, Validators } from '@angular/forms';
-
-import { NgbActiveModal } from '@ng-bootstrap/ng-bootstrap';
+import { Component, Inject, OnInit, Optional, TemplateRef, ViewChild } from '@angular/core';
+import { UntypedFormControl, AbstractControl, ValidationErrors, Validators } from '@angular/forms';
 import { Observable } from 'rxjs';
 
 import { CdFormGroup } from '~/app/shared/forms/cd-form-group';
 import { SubmitButtonComponent } from '../submit-button/submit-button.component';
+import { BaseModal } from 'carbon-components-angular';
 import { CdValidators } from '../../forms/cd-validators';
 import { DeletionImpact } from '../../enum/delete-confirmation-modal-impact.enum';
 
@@ -14,24 +13,33 @@ import { DeletionImpact } from '../../enum/delete-confirmation-modal-impact.enum
   templateUrl: './delete-confirmation-modal.component.html',
   styleUrls: ['./delete-confirmation-modal.component.scss']
 })
-export class DeleteConfirmationModalComponent implements OnInit {
+export class DeleteConfirmationModalComponent extends BaseModal implements OnInit {
   @ViewChild(SubmitButtonComponent, { static: true })
   submitButton: SubmitButtonComponent;
-  bodyTemplate: TemplateRef<any>;
-  bodyContext: object;
-  submitActionObservable: () => Observable<any>;
-  callBackAtionObservable: () => Observable<any>;
-  submitAction: Function;
-  backAction: Function;
   deletionForm: CdFormGroup;
-  itemDescription: 'entry';
-  itemNames: string[];
-  actionDescription = 'delete';
   impactEnum = DeletionImpact;
   childFormGroup: CdFormGroup;
   childFormGroupTemplate: TemplateRef<any>;
-  impact: DeletionImpact;
-  constructor(public activeModal: NgbActiveModal) {
+
+  constructor(
+    @Optional() @Inject('impact') public impact: DeletionImpact,
+    @Optional() @Inject('itemDescription') public itemDescription: 'entry',
+    @Optional() @Inject('itemNames') public itemNames: string[],
+    @Optional() @Inject('actionDescription') public actionDescription = 'delete',
+    @Optional() @Inject('submitAction') public submitAction?: Function,
+    @Optional() @Inject('backAction') public backAction?: Function,
+    @Optional() @Inject('bodyTemplate') public bodyTemplate?: TemplateRef<any>,
+    @Optional() @Inject('bodyContext') public bodyContext?: object,
+    @Optional() @Inject('infoMessage') public infoMessage?: string,
+    @Optional()
+    @Inject('submitActionObservable')
+    public submitActionObservable?: () => Observable<any>,
+    @Optional()
+    @Inject('callBackAtionObservable')
+    public callBackAtionObservable?: () => Observable<any>
+  ) {
+    super();
+    this.actionDescription = actionDescription || 'delete';
     this.impact = this.impact || DeletionImpact.medium;
   }
 
@@ -94,7 +102,7 @@ export class DeleteConfirmationModalComponent implements OnInit {
   }
 
   hideModal() {
-    this.activeModal.close();
+    this.closeModal();
   }
 
   stopLoadingSpinner() {

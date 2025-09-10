@@ -10,9 +10,10 @@ export class ConfigurationPageHelper extends PageHelper {
    * Does not work for configs with checkbox only, possible future PR
    */
   configClear(name: string) {
+    this.navigateTo();
     const valList = ['global', 'mon', 'mgr', 'osd', 'mds', 'client']; // Editable values
-    this.navigateEdit(name);
-
+    this.getFirstTableCell(name).click();
+    cy.contains('button', 'Edit').click();
     // Waits for the data to load
     cy.contains('.card-header', `Edit ${name}`);
 
@@ -27,7 +28,7 @@ export class ConfigurationPageHelper extends PageHelper {
     this.clearFilter();
 
     // Enter config setting name into filter box
-    this.searchTable(name);
+    this.searchTable(name, 100);
 
     // Expand row
     this.getExpandCollapseElement(name).click();
@@ -64,9 +65,10 @@ export class ConfigurationPageHelper extends PageHelper {
     // Clicks save button then waits until the desired config is visible, clicks it,
     // then checks that each desired value appears with the desired number
     cy.get('[data-cy=submitBtn]').click();
+    cy.wait(3 * 1000);
 
     // Enter config setting name into filter box
-    this.searchTable(name);
+    this.searchTable(name, 100);
 
     // Checks for visibility of config in table
     this.getExpandCollapseElement(name).should('be.visible').click();
@@ -75,13 +77,13 @@ export class ConfigurationPageHelper extends PageHelper {
     values.forEach((value) => {
       // iterates through list of values and
       // checks if the value appears in details with the correct number attatched
-      cy.contains('.table.table-striped.table-bordered', `${value[0]}\: ${value[1]}`);
+      cy.contains('[data-testid=config-details-table]', `${value[0]}\: ${value[1]}`);
     });
   }
 
   clearFilter() {
-    cy.get('div.filter-chips') // Find the div with class filter-tags
-      .find('a.tc_clearSelections') // Find the button with specific classes
+    cy.get('div.filter-tags') // Find the div with class filter-tags
+      .find('button.cds--btn.cds--btn--ghost') // Find the button with specific classes
       .contains('Clear filters') // Ensure the button contains the text "Clear filters"
       .should('be.visible') // Assert that the button is visible
       .click();

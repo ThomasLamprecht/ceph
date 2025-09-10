@@ -27,11 +27,11 @@ module;
 #include <atomic>
 #include <coroutine>
 #include <deque>
-#include <filesystem>
 #include <functional>
 #include <memory>
 #include <optional>
 #include <vector>
+#include <seastar/util/assert.hh>
 
 #define __user /* empty */  // for xfs includes, below
 
@@ -50,7 +50,7 @@ module;
  * (see: https://git.kernel.org/pub/scm/fs/xfs/xfsprogs-dev.git/commit/?id=df9c7d8d8f3ed0785ed83e7fd0c7ddc92cbfbe15)
  * There is a confliction with c++ keyword `fallthrough`, so undefine fallthrough here.
  */
-#undef fallthrough   
+#undef fallthrough
 #define min min    /* prevent xfs.h from defining min() as a macro */
 #include <xfs/xfs.h>
 #undef min
@@ -74,11 +74,6 @@ module seastar;
 #endif
 
 namespace seastar {
-
-#if SEASTAR_API_LEVEL < 7
-static_assert(std::is_nothrow_copy_constructible_v<io_priority_class>);
-static_assert(std::is_nothrow_move_constructible_v<io_priority_class>);
-#endif
 
 namespace internal {
 
@@ -205,35 +200,31 @@ posix_file_impl::flush() noexcept {
 
 future<struct stat>
 posix_file_impl::stat() noexcept {
-    return engine()._thread_pool->submit<syscall_result_extra<struct stat>>([fd = _fd] {
+    auto ret = co_await engine()._thread_pool->submit<syscall_result_extra<struct stat>>([fd = _fd] {
         struct stat st;
         auto ret = ::fstat(fd, &st);
         return wrap_syscall(ret, st);
-    }).then([] (syscall_result_extra<struct stat> ret) {
-        ret.throw_if_error();
-        return make_ready_future<struct stat>(ret.extra);
     });
+    ret.throw_if_error();
+    co_return ret.extra;
 }
 
 future<>
 posix_file_impl::truncate(uint64_t length) noexcept {
-    return engine()._thread_pool->submit<syscall_result<int>>([this, length] {
+    auto sr = co_await engine()._thread_pool->submit<syscall_result<int>>([this, length] {
         return wrap_syscall<int>(::ftruncate(_fd, length));
-    }).then([] (syscall_result<int> sr) {
-        sr.throw_if_error();
-        return make_ready_future<>();
     });
+    sr.throw_if_error();
 }
 
 future<int>
 posix_file_impl::ioctl(uint64_t cmd, void* argp) noexcept {
-    return engine()._thread_pool->submit<syscall_result<int>>([this, cmd, argp] () mutable {
+    auto sr = co_await engine()._thread_pool->submit<syscall_result<int>>([this, cmd, argp] () mutable {
         return wrap_syscall<int>(::ioctl(_fd, cmd, argp));
-    }).then([] (syscall_result<int> sr) {
-        sr.throw_if_error();
-        // Some ioctls require to return a positive integer back.
-        return make_ready_future<int>(sr.result);
     });
+    sr.throw_if_error();
+    // Some ioctls require to return a positive integer back.
+    co_return sr.result;
 }
 
 future<int>
@@ -248,13 +239,12 @@ posix_file_impl::ioctl_short(uint64_t cmd, void* argp) noexcept {
 
 future<int>
 posix_file_impl::fcntl(int op, uintptr_t arg) noexcept {
-    return engine()._thread_pool->submit<syscall_result<int>>([this, op, arg] () mutable {
+    auto sr = co_await engine()._thread_pool->submit<syscall_result<int>>([this, op, arg] () mutable {
         return wrap_syscall<int>(::fcntl(_fd, op, arg));
-    }).then([] (syscall_result<int> sr) {
-        sr.throw_if_error();
-        // Some fcntls require to return a positive integer back.
-        return make_ready_future<int>(sr.result);
     });
+    sr.throw_if_error();
+    // Some fcntls require to return a positive integer back.
+    co_return sr.result;
 }
 
 future<int>
@@ -269,13 +259,12 @@ posix_file_impl::fcntl_short(int op, uintptr_t arg) noexcept {
 
 future<>
 posix_file_impl::discard(uint64_t offset, uint64_t length) noexcept {
-    return engine()._thread_pool->submit<syscall_result<int>>([this, offset, length] () mutable {
+    auto sr = co_await engine()._thread_pool->submit<syscall_result<int>>(
+            [this, offset, length] () mutable {
         return wrap_syscall<int>(::fallocate(_fd, FALLOC_FL_PUNCH_HOLE|FALLOC_FL_KEEP_SIZE,
             offset, length));
-    }).then([] (syscall_result<int> sr) {
-        sr.throw_if_error();
-        return make_ready_future<>();
     });
+    sr.throw_if_error();
 }
 
 future<>
@@ -284,19 +273,18 @@ posix_file_impl::allocate(uint64_t position, uint64_t length) noexcept {
     // FALLOC_FL_ZERO_RANGE is fairly new, so don't fail if it's not supported.
     static bool supported = true;
     if (!supported) {
-        return make_ready_future<>();
+        co_return;
     }
-    return engine()._thread_pool->submit<syscall_result<int>>([this, position, length] () mutable {
+    auto sr = co_await engine()._thread_pool->submit<syscall_result<int>>(
+            [this, position, length] () mutable {
         auto ret = ::fallocate(_fd, FALLOC_FL_ZERO_RANGE|FALLOC_FL_KEEP_SIZE, position, length);
         if (ret == -1 && errno == EOPNOTSUPP) {
             ret = 0;
             supported = false; // Racy, but harmless.  At most we issue an extra call or two.
         }
         return wrap_syscall<int>(ret);
-    }).then([] (syscall_result<int> sr) {
-        sr.throw_if_error();
-        return make_ready_future<>();
     });
+    sr.throw_if_error();
 #else
     return make_ready_future<>();
 #endif
@@ -353,14 +341,13 @@ posix_file_impl::close() noexcept {
 
 future<uint64_t>
 blockdev_file_impl::size() noexcept {
-    return engine()._thread_pool->submit<syscall_result_extra<size_t>>([this] {
+    auto ret = co_await engine()._thread_pool->submit<syscall_result_extra<size_t>>([this] {
         uint64_t size;
         int ret = ::ioctl(_fd, BLKGETSIZE64, &size);
         return wrap_syscall(ret, size);
-    }).then([] (syscall_result_extra<uint64_t> ret) {
-        ret.throw_if_error();
-        return make_ready_future<uint64_t>(ret.extra);
     });
+    ret.throw_if_error();
+    co_return ret.extra;
 }
 
 static std::optional<directory_entry_type> dirent_type(const linux_dirent64& de) {
@@ -422,7 +409,7 @@ coroutine::experimental::generator<directory_entry> posix_file_impl::experimenta
     // due to https://github.com/scylladb/seastar/issues/1913, we cannot use
     // buffered generator yet.
     // TODO:
-    // Keep 8 entries. The sizeof(directory_entry) is 24 bytes, the name itself 
+    // Keep 8 entries. The sizeof(directory_entry) is 24 bytes, the name itself
     // is allocated out of this buffer, so the buffer would grow up to ~200 bytes
     return make_list_directory_generator(_fd);
 }
@@ -652,13 +639,12 @@ blockdev_file_impl::truncate(uint64_t length) noexcept {
 
 future<>
 blockdev_file_impl::discard(uint64_t offset, uint64_t length) noexcept {
-    return engine()._thread_pool->submit<syscall_result<int>>([this, offset, length] () mutable {
+    auto sr = co_await engine()._thread_pool->submit<syscall_result<int>>(
+            [this, offset, length] () mutable {
         uint64_t range[2] { offset, length };
         return wrap_syscall<int>(::ioctl(_fd, BLKDISCARD, &range));
-    }).then([] (syscall_result<int> sr) {
-        sr.throw_if_error();
-        return make_ready_future<>();
     });
+    sr.throw_if_error();
 }
 
 future<>
@@ -710,7 +696,7 @@ append_challenged_posix_file_impl::~append_challenged_posix_file_impl() {
     //
     // It is safe to destory it if nothing is queued.
     // Note that posix_file_impl::~posix_file_impl auto-closes the file descriptor.
-    assert(_q.empty() && (_logical_size == _committed_size || _closing_state == state::closed));
+    SEASTAR_ASSERT(_q.empty() && (_logical_size == _committed_size || _closing_state == state::closed));
 }
 
 bool
@@ -970,10 +956,9 @@ append_challenged_posix_file_impl::allocate(uint64_t position, uint64_t length) 
 future<struct stat>
 append_challenged_posix_file_impl::stat() noexcept {
     // FIXME: can this conflict with anything?
-    return posix_file_impl::stat().then([this] (struct stat stat) {
-        stat.st_size = _logical_size;
-        return stat;
-    });
+    auto stat = co_await posix_file_impl::stat();
+    stat.st_size = _logical_size;
+    co_return stat;
 }
 
 future<>
@@ -1131,11 +1116,15 @@ make_file_impl(int fd, file_open_options options, int flags, struct stat st) noe
         });
     }
 
-    const internal::fs_info& fsi = i->second;
-    if (!fsi.append_challenged || options.append_is_unlikely || ((flags & O_ACCMODE) == O_RDONLY)) {
-        return make_ready_future<shared_ptr<file_impl>>(make_shared<posix_file_real_impl>(fd, open_flags(flags), std::move(options), fsi, st_dev));
+    try {
+        const internal::fs_info& fsi = i->second;
+        if (!fsi.append_challenged || options.append_is_unlikely || ((flags & O_ACCMODE) == O_RDONLY)) {
+            return make_ready_future<shared_ptr<file_impl>>(make_shared<posix_file_real_impl>(fd, open_flags(flags), std::move(options), fsi, st_dev));
+        }
+        return make_ready_future<shared_ptr<file_impl>>(make_shared<append_challenged_posix_file_impl>(fd, open_flags(flags), std::move(options), fsi, st_dev));
+    } catch(...) {
+        return current_exception_as_future<shared_ptr<file_impl>>();
     }
-    return make_ready_future<shared_ptr<file_impl>>(make_shared<append_challenged_posix_file_impl>(fd, open_flags(flags), std::move(options), fsi, st_dev));
 }
 
 file::file(seastar::file_handle&& handle) noexcept
@@ -1198,10 +1187,6 @@ future<> file::set_lifetime_hint_impl(int op, uint64_t hint) noexcept {
     });
 }
 
-future<> file::set_file_lifetime_hint(uint64_t hint) noexcept {
-    return set_lifetime_hint_impl(F_SET_FILE_RW_HINT, hint);
-}
-
 future<> file::set_inode_lifetime_hint(uint64_t hint) noexcept {
     return set_lifetime_hint_impl(F_SET_RW_HINT, hint);
 }
@@ -1222,10 +1207,6 @@ future<uint64_t> file::get_lifetime_hint_impl(int op) noexcept {
     });
 }
 
-future<uint64_t> file::get_file_lifetime_hint() noexcept {
-    return get_lifetime_hint_impl(F_GET_FILE_RW_HINT);
-}
-
 future<uint64_t> file::get_inode_lifetime_hint() noexcept {
     return get_lifetime_hint_impl(F_GET_RW_HINT);
 }
@@ -1233,11 +1214,7 @@ future<uint64_t> file::get_inode_lifetime_hint() noexcept {
 future<temporary_buffer<uint8_t>>
 file::dma_read_bulk_impl(uint64_t offset, size_t range_size, internal::maybe_priority_class_ref pc, io_intent* intent) noexcept {
   try {
-#if SEASTAR_API_LEVEL >= 7
     return _file_impl->dma_read_bulk(offset, range_size, intent);
-#else
-    return _file_impl->dma_read_bulk(offset, range_size, pc.pc, intent);
-#endif
   } catch (...) {
     return current_exception_as_future<temporary_buffer<uint8_t>>();
   }
@@ -1285,11 +1262,7 @@ future<> file::flush() noexcept {
 
 future<size_t> file::dma_write_impl(uint64_t pos, std::vector<iovec> iov, internal::maybe_priority_class_ref pc, io_intent* intent) noexcept {
   try {
-#if SEASTAR_API_LEVEL >= 7
     return _file_impl->write_dma(pos, std::move(iov), intent);
-#else
-    return _file_impl->write_dma(pos, std::move(iov), pc.pc, intent);
-#endif
   } catch (...) {
     return current_exception_as_future<size_t>();
   }
@@ -1298,11 +1271,7 @@ future<size_t> file::dma_write_impl(uint64_t pos, std::vector<iovec> iov, intern
 future<size_t>
 file::dma_write_impl(uint64_t pos, const uint8_t* buffer, size_t len, internal::maybe_priority_class_ref pc, io_intent* intent) noexcept {
   try {
-#if SEASTAR_API_LEVEL >= 7
     return _file_impl->write_dma(pos, buffer, len, intent);
-#else
-    return _file_impl->write_dma(pos, buffer, len, pc.pc, intent);
-#endif
   } catch (...) {
     return current_exception_as_future<size_t>();
   }
@@ -1310,11 +1279,7 @@ file::dma_write_impl(uint64_t pos, const uint8_t* buffer, size_t len, internal::
 
 future<size_t> file::dma_read_impl(uint64_t pos, std::vector<iovec> iov, internal::maybe_priority_class_ref pc, io_intent* intent) noexcept {
   try {
-#if SEASTAR_API_LEVEL >= 7
     return _file_impl->read_dma(pos, std::move(iov), intent);
-#else
-    return _file_impl->read_dma(pos, std::move(iov), pc.pc, intent);
-#endif
   } catch (...) {
     return current_exception_as_future<size_t>();
   }
@@ -1345,11 +1310,7 @@ file::dma_read_impl(uint64_t pos, size_t len, internal::maybe_priority_class_ref
 future<size_t>
 file::dma_read_impl(uint64_t aligned_pos, uint8_t* aligned_buffer, size_t aligned_len, internal::maybe_priority_class_ref pc, io_intent* intent) noexcept {
   try {
-#if SEASTAR_API_LEVEL >= 7
     return _file_impl->read_dma(aligned_pos, aligned_buffer, aligned_len, intent);
-#else
-    return _file_impl->read_dma(aligned_pos, aligned_buffer, aligned_len, pc.pc, intent);
-#endif
   } catch (...) {
     return current_exception_as_future<size_t>();
   }

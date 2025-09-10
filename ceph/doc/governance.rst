@@ -21,57 +21,15 @@ Bodies
 Ceph Executive Council
 ======================
 
-.. _exec-council-responsibilities:
+Responsibilities
+----------------
 
-Ceph Executive Council Responsibilities
----------------------------------------
-
-- Spokesperson
-
-   - welcome/keynote for cephalocon
-     
-   - maintaining slides and presenting about the project
-
-   - Community focal point (user interaction, conference talks, mailing list,
-     etc)
+ * Arbiter in cases where decisions cannot be reached by consensus
+ * Distribute key responsibilities amongst themselves or others
+ * Point of contact for the project
+ * Representatives for Ceph foundation board meetings
+ * Ensure things get done
    
-- Community
-
-    - managing community manager
-
-    - LF Program Manager person, Social Media person
-
-    - liase with the ambassadors
-
-    - make sure ceph events happen, successfully: cephalocon, ceph days, cds, user/dev, cdm
-
-    - coordinating with LF
-
-    - creating program committee
-
-    - recordings on youtube
-
-    - getting sponsors for events
-
-    - communications, schedule, venue decisions
-
-    - coordinate blog posts
-
-
-- Ceph Foundation
-
-    - ensure foundation is healthy: financials, operations
-
-    - represent the CLT on the Board
-
-    - present project status regularly (yearly)
-
-    - collect member ideas / feedback
-
-    - ensure members feel valued
-
-    - guide the members how to support the project (events, testing, marketing, hardware, ...)
-
 Membership
 ----------
 
@@ -102,20 +60,24 @@ Responsibilities
 ----------------
 
  * Elect executive council
- * Amend governance model (by majority vote)
+ * Amend governance model by supermajority vote
  * Meet regularly to discuss and decide on tactical and strategic projects
    and improvements
+ * Hold an annual election
 
 Membership
 ----------
 
  * Developers, users, community members
- * Voting members can be nominated and added/removed by existing
-   members (2/3 majority)
+ * Members can be nominated and added/removed by existing members via a
+   supermajority vote
  * Anyone may attend steering committee meetings as a non-voting participant
  * Existing Ceph Leadership Team members are grandfathered in
  * Membership reflected by an email list and on the Ceph website and
    docs
+
+.. note:: A "supermajority" is a 2/3 majority of votes on a particular item
+          in an election. Abstaining does not bias a vote.
 
 Current Members
 ^^^^^^^^^^^^^^^
@@ -146,6 +108,17 @@ Current Members
  * Yingxin Cheng <yingxin.cheng@intel.com>
  * Yuri Weinstein <yweinste@redhat.com>
  * Zac Dover <zac.dover@proton.me>
+ * Laura Flores <lflores@redhat.com>
+ * Venky Shankar <vshankar@redhat.com>
+ * Guillaume Abrioux <gabrioux@redhat.com>
+ * Anthony D'Atri <anthony.datri@gmail.com>
+ * Joseph Mundackal <jmundackal@bloomberg.net>
+ * Gaurav Sitlani <gsitlani@ibm.com>
+ * Afreen Misbah <afreen@ibm.com>
+ * Radoslaw Zarzynski <rzarzyns@redhat.com>
+ * Matan Breizman <mbreizma@redhat.com>
+ * Yaarit Hatuka <yhatuka@ibm.com>
+ * Adam C. Emerson <aemerson@redhat.com>
 
 .. _ctl:
 

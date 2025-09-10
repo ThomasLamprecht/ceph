@@ -39,7 +39,7 @@ string RGWSyncErrorLogger::get_shard_oid(const string& oid_prefix, int shard_id)
 }
 
 RGWCoroutine *RGWSyncErrorLogger::log_error_cr(const DoutPrefixProvider *dpp, const string& source_zone, const string& section, const string& name, uint32_t error_code, const string& message) {
-  cls_log_entry entry;
+  cls::log::entry entry;
 
   rgw_sync_error_info info(source_zone, error_code, message);
   bufferlist bl;
@@ -399,7 +399,7 @@ protected:
   }
 public:
   string marker;
-  list<cls_log_entry> entries;
+  vector<cls::log::entry> entries;
   bool truncated;
 
   RGWAsyncReadMDLogEntries(const DoutPrefixProvider *dpp, RGWCoroutine *caller, RGWAioCompletionNotifier *cn, rgw::sal::RadosStore* _store,
@@ -416,7 +416,7 @@ class RGWReadMDLogEntriesCR : public RGWSimpleCoroutine {
   string marker;
   string *pmarker;
   int max_entries;
-  list<cls_log_entry> *entries;
+  vector<cls::log::entry> *entries;
   bool *truncated;
 
   RGWAsyncReadMDLogEntries *req{nullptr};
@@ -424,7 +424,7 @@ class RGWReadMDLogEntriesCR : public RGWSimpleCoroutine {
 public:
   RGWReadMDLogEntriesCR(RGWMetaSyncEnv *_sync_env, RGWMetadataLog* mdlog,
                         int _shard_id, string*_marker, int _max_entries,
-                        list<cls_log_entry> *_entries, bool *_truncated)
+                        vector<cls::log::entry> *_entries, bool *_truncated)
     : RGWSimpleCoroutine(_sync_env->cct), sync_env(_sync_env), mdlog(mdlog),
       shard_id(_shard_id), pmarker(_marker), max_entries(_max_entries),
       entries(_entries), truncated(_truncated) {}
@@ -505,12 +505,12 @@ public:
           return io_block(0);
         }
         yield {
-          op_ret = http_op->wait(shard_info, null_yield);
+          op_ret = http_op->wait(dpp, shard_info, null_yield);
           http_op->put();
         }
 
         if (op_ret < 0) {
-          if (op_ret == -EIO && tries < NUM_ENPOINT_IOERROR_RETRIES - 1) {
+          if (op_ret == -ERR_INTERNAL_ERROR && tries < NUM_ENPOINT_IOERROR_RETRIES - 1) {
             ldpp_dout(dpp, 20) << "failed to read remote metadata log shard info. retry. shard_id=" << shard_id << dendl;
             continue;
           } else {
@@ -586,7 +586,7 @@ public:
   }
 
   int request_complete() override {
-    int ret = http_op->wait(result, null_yield);
+    int ret = http_op->wait(sync_env->dpp, result, null_yield);
     http_op->put();
     if (ret < 0 && ret != -ENOENT) {
       ldpp_dout(sync_env->dpp, 5) << "ERROR: failed to list remote mdlog shard, ret=" << ret << dendl;
@@ -1089,12 +1089,12 @@ public:
           return io_block(0);
         }
         yield {
-          op_ret = http_op->wait(pbl, null_yield);
+          op_ret = http_op->wait(dpp, pbl, null_yield);
           http_op->put();
         }
 
         if (op_ret < 0) {
-          if (op_ret == -EIO && tries < NUM_ENPOINT_IOERROR_RETRIES - 1) {
+          if (op_ret == -ERR_INTERNAL_ERROR && tries < NUM_ENPOINT_IOERROR_RETRIES - 1) {
             ldpp_dout(dpp, 20) << "failed to read remote metadata. retry. section=" << section << " key=" << key << dendl;
             continue;
           } else {
@@ -1450,8 +1450,8 @@ class RGWMetaSyncShardCR : public RGWCoroutine {
 
   RGWMetaSyncShardMarkerTrack *marker_tracker = nullptr;
 
-  list<cls_log_entry> log_entries;
-  list<cls_log_entry>::iterator log_iter;
+  vector<cls::log::entry> log_entries;
+  decltype(log_entries)::iterator log_iter;
   bool truncated = false;
 
   string mdlog_marker;
@@ -1877,7 +1877,7 @@ public:
               continue;
             }
             tn->log(20, SSTR("log_entry: " << log_iter->id << ":" << log_iter->section << ":" << log_iter->name << ":" << log_iter->timestamp));
-            if (!marker_tracker->start(log_iter->id, 0, log_iter->timestamp.to_real_time())) {
+            if (!marker_tracker->start(log_iter->id, 0, log_iter->timestamp)) {
               ldpp_dout(sync_env->dpp, 0) << "ERROR: cannot start syncing " << log_iter->id << ". Duplicate entry?" << dendl;
             } else {
               raw_key = log_iter->section + ":" + log_iter->name;
@@ -2440,7 +2440,7 @@ int RGWCloneMetaLogCoroutine::operate(const DoutPrefixProvider *dpp)
           return state_receive_rest_response();
         }
 
-        if (op_ret == -EIO && tries < NUM_ENPOINT_IOERROR_RETRIES - 1) {
+        if (op_ret == -ERR_INTERNAL_ERROR && tries < NUM_ENPOINT_IOERROR_RETRIES - 1) {
           ldout(cct, 20) << __func__ << ": request IO error. retries=" << tries << dendl;
           continue;
         } else if (op_ret < 0) {
@@ -2475,7 +2475,7 @@ int RGWCloneMetaLogCoroutine::state_read_shard_status()
   const bool add_ref = false; // default constructs with refs=1
 
   completion.reset(new RGWMetadataLogInfoCompletion(
-    [this](int ret, const cls_log_header& header) {
+    [this](int ret, const cls::log::header& header) {
       if (ret < 0) {
         if (ret != -ENOENT) {
           ldpp_dout(sync_env->dpp, 1) << "ERROR: failed to read mdlog info with "
@@ -2483,7 +2483,7 @@ int RGWCloneMetaLogCoroutine::state_read_shard_status()
         }
       } else {
         shard_info.marker = header.max_marker;
-        shard_info.last_update = header.max_time.to_real_time();
+        shard_info.last_update = header.max_time;
       }
       // wake up parent stack
       io_complete();
@@ -2546,8 +2546,8 @@ int RGWCloneMetaLogCoroutine::state_send_rest_request(const DoutPrefixProvider *
 
 int RGWCloneMetaLogCoroutine::state_receive_rest_response()
 {
-  op_ret = http_op->wait(&data, null_yield);
-  if (op_ret < 0 && op_ret != -EIO) {
+  op_ret = http_op->wait(sync_env->dpp, &data, null_yield);
+  if (op_ret < 0 && op_ret != -ERR_INTERNAL_ERROR) {
     error_stream << "http operation failed: " << http_op->to_str() << " status=" << http_op->get_http_status() << std::endl;
     ldpp_dout(sync_env->dpp, 5) << "failed to wait for op, ret=" << op_ret << dendl;
     http_op->put();
@@ -2557,7 +2557,7 @@ int RGWCloneMetaLogCoroutine::state_receive_rest_response()
   http_op->put();
   http_op = NULL;
 
-  if (op_ret == -EIO) {
+  if (op_ret == -ERR_INTERNAL_ERROR) {
     return 0;
   }
 
@@ -2582,18 +2582,18 @@ int RGWCloneMetaLogCoroutine::state_receive_rest_response()
 
 int RGWCloneMetaLogCoroutine::state_store_mdlog_entries()
 {
-  list<cls_log_entry> dest_entries;
+  vector<cls::log::entry> dest_entries;
 
   vector<rgw_mdlog_entry>::iterator iter;
   for (iter = data.entries.begin(); iter != data.entries.end(); ++iter) {
     rgw_mdlog_entry& entry = *iter;
     ldpp_dout(sync_env->dpp, 20) << "entry: name=" << entry.name << dendl;
 
-    cls_log_entry dest_entry;
+    cls::log::entry dest_entry;
     dest_entry.id = entry.id;
     dest_entry.section = entry.section;
     dest_entry.name = entry.name;
-    dest_entry.timestamp = utime_t(entry.timestamp);
+    dest_entry.timestamp = entry.timestamp;
   
     encode(entry.log_data, dest_entry.data);
 

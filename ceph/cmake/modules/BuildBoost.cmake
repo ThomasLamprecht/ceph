@@ -11,6 +11,8 @@
 #  Boost_USE_STATIC_LIBS : boolean (default: OFF)
 #  Boost_USE_MULTITHREADED : boolean (default: OFF)
 #  BOOST_J: integer (defanult 1)
+#
+# Note: Remove boost_redis submodule once upgraded to Boost version that includes it
 
 function(check_boost_version source_dir expected_version)
   set(version_hpp "${source_dir}/boost/version.hpp")
@@ -91,13 +93,15 @@ function(do_build_boost root_dir version)
     message(SEND_ERROR "unknown compiler: ${CMAKE_CXX_COMPILER_ID}")
   endif()
 
-  # build b2 and prepare the project-config.jam for boost
+  # prepare the project-config.jam for boost
+  set(bjam <SOURCE_DIR>/b2)
   set(configure_command
     ./bootstrap.sh --prefix=<INSTALL_DIR>
     --with-libraries=${boost_with_libs}
-    --with-toolset=${toolset})
+    --with-toolset=${toolset}
+    --with-bjam=${bjam})
 
-  set(b2 ./b2)
+  set(b2 ${bjam})
   if(BOOST_J)
     message(STATUS "BUILDING Boost Libraries at j ${BOOST_J}")
     list(APPEND b2 -j${BOOST_J})
@@ -153,18 +157,19 @@ function(do_build_boost root_dir version)
     check_boost_version("${PROJECT_SOURCE_DIR}/src/boost" ${version})
     set(source_dir
       SOURCE_DIR "${PROJECT_SOURCE_DIR}/src/boost")
-  elseif(version VERSION_GREATER 1.82)
+  elseif(version VERSION_GREATER 1.87)
     message(FATAL_ERROR "Unknown BOOST_REQUESTED_VERSION: ${version}")
   else()
     message(STATUS "boost will be downloaded...")
     # NOTE: If you change this version number make sure the package is available
     # at the three URLs below (may involve uploading to download.ceph.com)
-    set(boost_version 1.82.0)
-    set(boost_sha256 a6e1ab9b0860e6a2881dd7b21fe9f737a095e5f33a3a874afc6a345228597ee6)
+    set(boost_version 1.87.0)
+    set(boost_sha256 af57be25cb4c4f4b413ed692fe378affb4352ea50fbe294a11ef548f4d527d89)
     string(REPLACE "." "_" boost_version_underscore ${boost_version} )
     list(APPEND boost_url
-      https://boostorg.jfrog.io/artifactory/main/release/${boost_version}/source/boost_${boost_version_underscore}.tar.bz2
-      https://download.ceph.com/qa/boost_${boost_version_underscore}.tar.bz2)
+      https://download.ceph.com/qa/boost_${boost_version_underscore}.tar.bz2
+      https://archives.boost.io//release/${boost_version}/source/boost_${boost_version_underscore}.tar.bz2
+      https://boostorg.jfrog.io/artifactory/main/release/${boost_version}/source/boost_${boost_version_underscore}.tar.bz2)
     set(source_dir
       URL ${boost_url}
       URL_HASH SHA256=${boost_sha256}
@@ -180,6 +185,13 @@ function(do_build_boost root_dir version)
     BUILD_BYPRODUCTS ${Boost_LIBRARIES}
     INSTALL_COMMAND ${install_command}
     PREFIX "${root_dir}")
+  ExternalProject_Add_Step(Boost build-bjam
+    COMMAND ./tools/build/src/engine/build.sh --cxx=${CMAKE_CXX_COMPILER} ${toolset}
+    COMMAND ${CMAKE_COMMAND} -E copy ./tools/build/src/engine/b2 ${bjam}
+    DEPENDEES download
+    DEPENDERS configure
+    COMMENT "Building B2 engine.."
+    WORKING_DIRECTORY <SOURCE_DIR>)
 endfunction()
 
 set(Boost_context_DEPENDENCIES thread chrono system date_time)

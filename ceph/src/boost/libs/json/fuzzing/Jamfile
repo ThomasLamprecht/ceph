@@ -16,6 +16,7 @@ import os ;
 import path ;
 import property ;
 import sequence ;
+import testing ;
 
 
 # set the maximum size of the input, to avoid
@@ -58,8 +59,8 @@ explicit old-corpus ;
 local initial-corpus = [ glob-tree-ex ../test : *.json ] ;
 
 
-local variants = basic_parser parse parser ;
-for local variant in basic_parser parse parser
+local variants = basic_parser parse parser direct_parse ;
+for local variant in basic_parser parse parser direct_parse
 {
     local $(variant)-runs ;
     local fuzzer = fuzzer_$(variant) ;
@@ -152,7 +153,7 @@ rule fuzzer-props ( props * )
           <linkflags>-fsanitize=fuzzer
           # explicitly set BOOST_JSON_STACK_BUFFER_SIZE small so interesting
           # code paths are taken also for small inputs
-          # (see https://github.com/CPPAlliance/json/issues/333)
+          # (see https://github.com/boostorg/json/issues/333)
           <define>BOOST_JSON_STACK_BUFFER_SIZE=64
           ;
     }

@@ -35,17 +35,19 @@ namespace rgw::putobj {
  * cloudtier config info read from the attrs.
  * Since these attrs are used internally for only replication, do not store them
  * in the head object.
+ * 
+ * Update versioned epoch incase the object is being restored.
  */
-void read_cloudtier_info_from_attrs(rgw::sal::Attrs& attrs, RGWObjCategory& category,
-                          RGWObjManifest& manifest) {
+int read_cloudtier_info_from_attrs(rgw::sal::Attrs& attrs, RGWObjCategory& category,
+                          std::optional<uint64_t>& olh_epoch, RGWObjManifest& manifest) {
   auto attr_iter = attrs.find(RGW_ATTR_CLOUD_TIER_TYPE);
   if (attr_iter != attrs.end()) {
     auto i = attr_iter->second;
     string m = i.to_str();
 
-    if (m == "cloud-s3") {
+    if (RGWTierType::is_tier_type_supported(m)) {
       category = RGWObjCategory::CloudTiered;
-      manifest.set_tier_type("cloud-s3");
+      manifest.set_tier_type(m);
 
       auto config_iter = attrs.find(RGW_ATTR_CLOUD_TIER_CONFIG);
       if (config_iter != attrs.end()) {
@@ -58,11 +60,37 @@ void read_cloudtier_info_from_attrs(rgw::sal::Attrs& attrs, RGWObjCategory& cate
           manifest.set_tier_config(tier_config);
           attrs.erase(config_iter);
         } catch (buffer::error& err) {
+          return -EIO;
         }
       }
     }
     attrs.erase(attr_iter);
   }
+  attr_iter = attrs.find(RGW_ATTR_RESTORE_VERSIONED_EPOCH);
+  if (attr_iter != attrs.end()) {
+    try {
+      using ceph::decode;
+      uint64_t v_epoch = 0;
+      decode(v_epoch, attr_iter->second);
+      olh_epoch = v_epoch;
+      /*
+       * Keep this attr only for Temp restored copies as its needed while
+       * resetting head object post expiry.
+       */
+      auto r_iter = attrs.find(RGW_ATTR_RESTORE_TYPE);
+      if (r_iter != attrs.end()) {
+        rgw::sal::RGWRestoreType restore_type;
+        using ceph::decode;
+        decode(restore_type, r_iter->second);
+        if (restore_type != rgw::sal::RGWRestoreType::Temporary) {
+	        attrs.erase(attr_iter);
+        }
+      }
+    } catch (buffer::error& err) {
+      return -EIO;
+    }
+  }
+  return 0;
 }
 
 int HeadObjectProcessor::process(bufferlist&& data, uint64_t logical_offset)
@@ -340,19 +368,21 @@ int AtomicObjectProcessor::prepare(optional_yield y)
   return 0;
 }
 
-int AtomicObjectProcessor::complete(size_t accounted_size,
-                                    const std::string& etag,
-                                    ceph::real_time *mtime,
-                                    ceph::real_time set_mtime,
-                                    rgw::sal::Attrs& attrs,
-                                    ceph::real_time delete_at,
-                                    const char *if_match,
-                                    const char *if_nomatch,
-                                    const std::string *user_data,
-                                    rgw_zone_set *zones_trace,
-                                    bool *pcanceled, 
-                                    const req_context& rctx,
-                                    uint32_t flags)
+int AtomicObjectProcessor::complete(
+				size_t accounted_size,
+				const std::string& etag,
+				ceph::real_time *mtime,
+				ceph::real_time set_mtime,
+				rgw::sal::Attrs& attrs,
+				const std::optional<rgw::cksum::Cksum>& cksum,
+				ceph::real_time delete_at,
+				const char *if_match,
+				const char *if_nomatch,
+				const std::string *user_data,
+				rgw_zone_set *zones_trace,
+				bool *pcanceled, 
+				const req_context& rctx,
+				uint32_t flags)
 {
   int r = writer.drain();
   if (r < 0) {
@@ -388,7 +418,11 @@ int AtomicObjectProcessor::complete(size_t accounted_size,
   obj_op.meta.zones_trace = zones_trace;
   obj_op.meta.modify_tail = true;
 
-  read_cloudtier_info_from_attrs(attrs, obj_op.meta.category, manifest);
+  r = read_cloudtier_info_from_attrs(attrs, obj_op.meta.category, obj_op.meta.olh_epoch, manifest);
+
+  if (r < 0) { // incase of any errors while decoding tier_config/restore attrs
+    return r;
+  }
 
   r = obj_op.write_meta(actual_size, accounted_size, attrs, rctx,
                         writer.get_trace(), flags & rgw::sal::FLAG_LOG_OP);
@@ -488,19 +522,21 @@ int MultipartObjectProcessor::prepare(optional_yield y)
   return prepare_head();
 }
 
-int MultipartObjectProcessor::complete(size_t accounted_size,
-                                       const std::string& etag,
-                                       ceph::real_time *mtime,
-                                       ceph::real_time set_mtime,
-                                       std::map<std::string, bufferlist>& attrs,
-                                       ceph::real_time delete_at,
-                                       const char *if_match,
-                                       const char *if_nomatch,
-                                       const std::string *user_data,
-                                       rgw_zone_set *zones_trace,
-                                       bool *pcanceled, 
-                                       const req_context& rctx,
-                                       uint32_t flags)
+int MultipartObjectProcessor::complete(
+			       size_t accounted_size,
+			       const std::string& etag,
+			       ceph::real_time *mtime,
+			       ceph::real_time set_mtime,
+			       std::map<std::string, bufferlist>& attrs,
+			       const std::optional<rgw::cksum::Cksum>& cksum,
+			       ceph::real_time delete_at,
+			       const char *if_match,
+			       const char *if_nomatch,
+			       const std::string *user_data,
+			       rgw_zone_set *zones_trace,
+			       bool *pcanceled, 
+			       const req_context& rctx,
+			       uint32_t flags)
 {
   int r = writer.drain();
   if (r < 0) {
@@ -543,6 +579,7 @@ int MultipartObjectProcessor::complete(size_t accounted_size,
   }
   info.num = part_num;
   info.etag = etag;
+  info.cksum = cksum;
   info.size = actual_size;
   info.accounted_size = accounted_size;
   info.modified = real_clock::now();
@@ -573,7 +610,7 @@ int MultipartObjectProcessor::complete(size_t accounted_size,
   op.assert_exists();
   cls_rgw_mp_upload_part_info_update(op, p, info);
   cls_version_inc(op);
-  r = rgw_rados_operate(rctx.dpp, meta_obj_ref.ioctx, meta_obj_ref.obj.oid, &op, rctx.y);
+  r = rgw_rados_operate(rctx.dpp, meta_obj_ref.ioctx, meta_obj_ref.obj.oid, std::move(op), rctx.y);
   ldpp_dout(rctx.dpp, 20) << "Update meta: " << meta_obj_ref.obj.oid << " part " << p << " prefix " << info.manifest.get_prefix() << " return " << r << dendl;
 
   if (r == -EOPNOTSUPP) {
@@ -588,7 +625,7 @@ int MultipartObjectProcessor::complete(size_t accounted_size,
     op.assert_exists(); // detect races with abort
     op.omap_set(m);
     cls_version_inc(op);
-    r = rgw_rados_operate(rctx.dpp, meta_obj_ref.ioctx, meta_obj_ref.obj.oid, &op, rctx.y);
+    r = rgw_rados_operate(rctx.dpp, meta_obj_ref.ioctx, meta_obj_ref.obj.oid, std::move(op), rctx.y);
   }
 
   if (r < 0) {
@@ -712,11 +749,16 @@ int AppendObjectProcessor::prepare(optional_yield y)
   return 0;
 }
 
-int AppendObjectProcessor::complete(size_t accounted_size, const string &etag, ceph::real_time *mtime,
-                                    ceph::real_time set_mtime, rgw::sal::Attrs& attrs,
-                                    ceph::real_time delete_at, const char *if_match, const char *if_nomatch,
-                                    const string *user_data, rgw_zone_set *zones_trace, bool *pcanceled,
-                                    const req_context& rctx, uint32_t flags)
+int AppendObjectProcessor::complete(
+			    size_t accounted_size,
+			    const string &etag, ceph::real_time *mtime,
+			    ceph::real_time set_mtime, rgw::sal::Attrs& attrs,
+			    const std::optional<rgw::cksum::Cksum>& cksum,
+			    ceph::real_time delete_at, const char *if_match,
+			    const char *if_nomatch,
+			    const string *user_data, rgw_zone_set *zones_trace,
+			    bool *pcanceled,
+			    const req_context& rctx, uint32_t flags)
 {
   int r = writer.drain();
   if (r < 0)
@@ -776,7 +818,8 @@ int AppendObjectProcessor::complete(size_t accounted_size, const string &etag, c
   }
   r = obj_op.write_meta(actual_size + cur_size,
 			accounted_size + *cur_accounted_size,
-			attrs, rctx, writer.get_trace(), flags & rgw::sal::FLAG_LOG_OP);
+			attrs, rctx, writer.get_trace(),
+			flags & rgw::sal::FLAG_LOG_OP);
   if (r < 0) {
       if (r == -ETIMEDOUT) {
       // The head object write may eventually succeed, clear the set of objects for deletion. if it

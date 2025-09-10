@@ -85,6 +85,8 @@ export class PoolFormComponent extends CdForm implements OnInit {
   crushUsage: string[] = undefined; // Will only be set if a rule is used by some pool
   ecpUsage: string[] = undefined; // Will only be set if a rule is used by some pool
   crushRuleMaxSize = 10;
+  DEFAULT_RATIO = 0.875;
+  isApplicationsSelected = true;
   msrCrush: boolean = false;
 
   private modalSubscription: Subscription;
@@ -132,7 +134,7 @@ export class PoolFormComponent extends CdForm implements OnInit {
       maxBlobSize: new UntypedFormControl('', {
         updateOn: 'blur'
       }),
-      ratio: new UntypedFormControl('', {
+      ratio: new UntypedFormControl(this.DEFAULT_RATIO, {
         updateOn: 'blur'
       })
     });
@@ -165,7 +167,7 @@ export class PoolFormComponent extends CdForm implements OnInit {
             CdValidators.custom(
               'required',
               (rule: CrushRule) =>
-                this.isReplicated && this.info.crush_rules_replicated.length > 0 && !rule
+                this.isReplicated && this.info?.crush_rules_replicated?.length > 0 && !rule
             )
           ]
         }),
@@ -299,7 +301,7 @@ export class PoolFormComponent extends CdForm implements OnInit {
 
   private setAvailableApps(apps: string[] = this.data.applications.default) {
     this.data.applications.available = _.uniq(apps.sort()).map(
-      (x: string) => new SelectOption(false, x, '')
+      (x: string) => new SelectOption(false, x, this.data.APP_LABELS[x] || x)
     );
   }
 
@@ -861,12 +863,20 @@ export class PoolFormComponent extends CdForm implements OnInit {
       if (apps.includes('rbd')) {
         pool['rbd_mirroring'] = this.form.getValue('rbdMirroring');
       }
+      this.isApplicationsSelected = true;
+    } else {
+      this.isApplicationsSelected = false;
     }
 
     // Only collect configuration data for replicated pools, as QoS cannot be configured on EC
     // pools. EC data pools inherit their settings from the corresponding replicated metadata pool.
     if (this.isReplicated && !_.isEmpty(this.currentConfigurationValues)) {
       pool['configuration'] = this.currentConfigurationValues;
+    }
+
+    if (!this.isApplicationsSelected) {
+      this.form.setErrors({ cdSubmitButton: true });
+      return;
     }
 
     this.triggerApiTask(pool);

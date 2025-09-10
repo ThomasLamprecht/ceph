@@ -46,6 +46,18 @@
               </a>
             </dd>
           </ng-container>
+          <ng-container *ngIf="managedByConfig$ | async as managedByConfig">
+            <span *ngIf="managedByConfig['MANAGED_BY_CLUSTERS'].length > 0">
+              <dt>Managed By</dt>
+              <dd>
+                <a target="_blank"
+                   [href]="managedByConfig['MANAGED_BY_CLUSTERS'][0]['url']">
+                  {{ managedByConfig['MANAGED_BY_CLUSTERS'][0]['fsid'] }}
+                  <i class="fa fa-external-link"></i>
+                </a>
+              </dd>
+            </span>
+          </ng-container>
         </dl>
       </cd-card>
 
@@ -59,7 +71,9 @@
                      link="/hosts"
                      title="Host"
                      summaryType="simplified"
-                     *ngIf="healthData.hosts != null"></cd-card-row>
+                     *ngIf="healthData.hosts != null"
+                     [dropdownData]="(isHardwareEnabled$ | async) && (hardwareSummary$ | async)">
+        </cd-card-row>
         <!-- Monitors -->
         <cd-card-row [data]="healthData.mon_status.monmap.mons.length"
                      link="/monitor"
@@ -133,27 +147,41 @@
               </a>
             </div>
             <div class="d-flex flex-column ms-4 me-4 mt-4 mb-4">
-              <ng-template #healthChecks>
-                <cd-health-checks *ngIf="healthData?.health?.checks"
-                                  [healthData]="healthData.health.checks"></cd-health-checks>
-              </ng-template>
-
-              <div class="d-flex flex-row">
-                <i *ngIf="healthData.health?.status"
-                   [ngClass]="[healthData.health.status | healthIcon, icons.large2x]"
-                   [ngStyle]="healthData.health.status | healthColor"
-                   [title]="healthData.health.status"></i>
+              <div class="d-flex flex-row col-md-3 ms-4">
+                <i  *ngIf="healthData.health?.status"
+                    [ngClass]="[healthData.health.status | healthIcon, icons.large2x]"
+                    [ngStyle]="healthData.health.status | healthColor"
+                    [title]="healthData.health.status">
+                </i>
+              <span class="ms-2 mt-n1 lead"
+                    *ngIf="!healthData.health?.checks?.length"
+                    i18n>Cluster</span>
+              <cds-toggletip  [dropShadow]="true"
+                              [autoAlign]="true">
+              <div cdsToggletipButton>
                 <a class="ms-2 mt-n1 lead text-primary"
-                   [ngbPopover]="healthChecks"
                    popoverClass="info-card-popover-cluster-status"
-                   [openDelay]="300"
-                   [closeDelay]="500"
-                   triggers="mouseenter"
                    *ngIf="healthData.health?.checks?.length"
-                   i18n>Cluster</a>
+                   i18n>Cluster
+                </a>
+              </div>
+              <div cdsToggletipContent
+                   #healthCheck>
+                <cd-health-checks *ngIf="healthData?.health?.checks"
+                                  [healthData]="healthData.health.checks">
+                </cd-health-checks>
+              </div>
+            </cds-toggletip>
+          </div>
+          </div>
+
+            <div class="d-flex flex-column col-md-3">
+              <div *ngIf="hasHardwareError"
+                   class="d-flex flex-row">
+                <i class="text-danger"
+                   [ngClass]="[icons.danger, icons.large2x]"></i>
                 <span class="ms-2 mt-n1 lead"
-                      *ngIf="!healthData.health?.checks?.length"
-                      i18n>Cluster</span>
+                      i18n>Hardware</span>
               </div>
             </div>
             <section class="footer alerts"
@@ -203,7 +231,7 @@
                    [fullHeight]="true"
                    aria-label="Capacity card">
             <ng-container class="ms-4 me-4"
-                          *ngIf="capacity && osdSettings">
+                          *ngIf="capacity">
               <cd-dashboard-pie [data]="{max: capacity.total_bytes, current: capacity.total_used_raw_bytes}"
                                 [lowThreshold]="osdSettings.nearfull_ratio"
                                 [highThreshold]="osdSettings.full_ratio">

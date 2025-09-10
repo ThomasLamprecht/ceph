@@ -51,8 +51,22 @@ if(BOOST_JSON_IS_ROOT)
     unset(CMAKE_FOLDER)
 endif()
 
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/pretty_printers")
+find_package(BoostPrettyPrinters QUIET)
+if(BoostPrettyPrinters_FOUND)
+    boost_pretty_printers_gdb_python_header(
+        TARGET boost_json_regenerate_printers
+        INPUT src/boost_json_gdb_printers.py
+        OUTPUT include/boost/json/detail/gdb_printers.hpp
+        HEADER_GUARD BOOST_JSON_DETAIL_GDB_PRINTERS_HPP
+        NO_DISABLE_MACRO
+        EXCLUDE_FROM_ALL)
+endif()
 
 function(boost_json_setup_properties target)
+    if(MSVC)
+        target_compile_definitions(${target} PRIVATE _SCL_SECURE_NO_WARNINGS)
+    endif()
     target_compile_features(${target} PUBLIC cxx_constexpr)
     target_compile_definitions(${target} PUBLIC BOOST_JSON_NO_LIB=1)
 
@@ -72,8 +86,10 @@ function(boost_json_setup_properties target)
             Boost::assert
             Boost::config
             Boost::container
+            Boost::container_hash
             Boost::core
             Boost::describe
+            Boost::endian
             Boost::mp11
             Boost::system
             Boost::throw_exception

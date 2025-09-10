@@ -3,12 +3,11 @@
 // Copyright (c) 2007-2022 Barend Gehrels, Amsterdam, the Netherlands.
 // Copyright (c) 2008-2012 Bruno Lalande, Paris, France.
 // Copyright (c) 2009-2012 Mateusz Loskot, London, UK.
-// Copyright (c) 2017 Adam Wulkiewicz, Lodz, Poland.
+// Copyright (c) 2017-2023 Adam Wulkiewicz, Lodz, Poland.
 // Copyright (c) 2020 Baidyanath Kundu, Haldia, India
 
 // This file was modified by Oracle on 2014-2021.
 // Modifications copyright (c) 2014-2021 Oracle and/or its affiliates.
-
 // Contributed and/or modified by Adam Wulkiewicz, on behalf of Oracle
 
 // Parts of Boost.Geometry are redesigned from Geodan's Geographic Library
@@ -24,14 +23,13 @@
 #include <cstddef>
 #include <string>
 
+#include <boost/algorithm/string/predicate.hpp>
 #include <boost/lexical_cast.hpp>
-#include <boost/tokenizer.hpp>
-
-#include <boost/algorithm/string.hpp>
 #include <boost/range/begin.hpp>
 #include <boost/range/end.hpp>
 #include <boost/range/size.hpp>
 #include <boost/range/value_type.hpp>
+#include <boost/tokenizer.hpp>
 #include <boost/throw_exception.hpp>
 
 #include <boost/geometry/algorithms/assign.hpp>
@@ -98,9 +96,7 @@ struct read_wkt_exception : public geometry::exception
         complete = message + "' in (" + wkt.substr(0, 100) + ")";
     }
 
-    virtual ~read_wkt_exception() throw() {}
-
-    virtual const char* what() const throw()
+    const char* what() const noexcept override
     {
         return complete.c_str();
     }
@@ -754,7 +750,7 @@ struct box_parser
     {
         auto const tokens{make_tokenizer(wkt)};
         auto it = tokens.begin();
-        auto end = tokens.end();
+        auto const end = tokens.end();
 
         apply(it, end, wkt, box);
 
@@ -790,7 +786,7 @@ struct box_parser
             BOOST_THROW_EXCEPTION(read_wkt_exception("Should start with 'POLYGON' or 'BOX'", wkt));
         }
 
-        using point_type = typename point_type<Box>::type;
+        using point_type = point_type_t<Box>;
         std::vector<point_type> points;
         container_inserter<point_type>::apply(it, end, wkt, std::back_inserter(points));
 
@@ -835,7 +831,7 @@ struct segment_parser
     {
         auto const tokens{make_tokenizer(wkt)};
         auto it = tokens.begin();
-        auto end = tokens.end();
+        auto const end = tokens.end();
 
         apply(it, end, wkt, segment);
 
@@ -859,7 +855,7 @@ struct segment_parser
             BOOST_THROW_EXCEPTION(read_wkt_exception("Should start with 'LINESTRING' or 'SEGMENT'", wkt));
         }
 
-        using point_type = typename point_type<Segment>::type;
+        using point_type = point_type_t<Segment>;
         std::vector<point_type> points;
         container_inserter<point_type>::apply(it, end, wkt, std::back_inserter(points));
 
@@ -1122,7 +1118,7 @@ struct read_wkt<DynamicGeometry, dynamic_geometry_tag>
     {
         auto tokens{detail::wkt::make_tokenizer(wkt)};
         auto it = tokens.begin();
-        auto end = tokens.end();
+        auto const end = tokens.end();
         if (it == end)
         {
             BOOST_THROW_EXCEPTION(read_wkt_exception(
@@ -1192,10 +1188,10 @@ struct read_wkt<Geometry, geometry_collection_tag>
 #endif // DOXYGEN_NO_DISPATCH
 
 /*!
-\brief Parses OGC Well-Known Text (\ref WKT) into a geometry (any geometry)
+\brief Parses OGC \well_known_text (\wkt) into a geometry (any geometry)
 \ingroup wkt
 \tparam Geometry \tparam_geometry
-\param wkt string containing \ref WKT
+\param wkt string containing \wkt
 \param geometry \param_geometry output geometry
 \ingroup wkt
 \qbk{[include reference/io/read_wkt.qbk]}
@@ -1208,10 +1204,10 @@ inline void read_wkt(std::string const& wkt, Geometry& geometry)
 }
 
 /*!
-\brief Parses OGC Well-Known Text (\ref WKT) into a geometry (any geometry) and returns it
+\brief Parses OGC \well_known_text (\wkt) into a geometry (any geometry) and returns it
 \ingroup wkt
 \tparam Geometry \tparam_geometry
-\param wkt string containing \ref WKT
+\param wkt string containing \wkt
 \ingroup wkt
 \qbk{[include reference/io/from_wkt.qbk]}
 */

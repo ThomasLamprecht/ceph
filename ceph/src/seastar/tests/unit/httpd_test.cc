@@ -26,8 +26,10 @@
 #include <seastar/core/shared_future.hh>
 #include <seastar/http/client.hh>
 #include <seastar/http/url.hh>
+#include <seastar/util/assert.hh>
 #include <seastar/util/later.hh>
 #include <seastar/util/short_streams.hh>
+#include <seastar/util/closeable.hh>
 
 using namespace seastar;
 using namespace httpd;
@@ -45,7 +47,7 @@ class loopback_http_factory : public http::experimental::connection_factory {
     loopback_socket_impl lsi;
 public:
     explicit loopback_http_factory(loopback_connection_factory& f) : lsi(f) {}
-    virtual future<connected_socket> make() override {
+    virtual future<connected_socket> make(abort_source* as) override {
         return lsi.connect(socket_address(ipv4_addr()), socket_address(ipv4_addr()));
     }
 };
@@ -781,6 +783,22 @@ SEASTAR_TEST_CASE(json_stream) {
     });
 }
 
+// See issue https://github.com/scylladb/seastar/issues/1701
+SEASTAR_TEST_CASE(dont_abort) {
+    return test_client_server::run_test(
+            [](seastar::output_stream<char>&& stream_) -> future<> {
+        auto stream = std::move(stream_);
+        co_await stream.write(seastar::temporary_buffer<char>{3});
+        co_await stream.close();
+    }
+    , [](size_t s, http_consumer& h) {
+        BOOST_REQUIRE_EQUAL(h._size, 3);
+        return false;
+    });
+
+}
+
+
 class json_test_handler : public handler_base {
     std::function<future<>(output_stream<char> &&)> _write_func;
 public:
@@ -922,6 +940,69 @@ SEASTAR_TEST_CASE(test_client_response_eof) {
     });
 }
 
+SEASTAR_TEST_CASE(test_client_retry_nested) {
+    return seastar::async([] {
+        loopback_connection_factory lcf(1);
+        auto ss = lcf.get_server_socket();
+        future<> server = ss.accept().then([] (accept_result ar) {
+            return seastar::async([sk = std::move(ar.connection)] () mutable {
+                input_stream<char> in = sk.input();
+                    read_simple_http_request(in);
+                    output_stream<char> out = sk.output();
+                    sstring r200("HTTP/1.1 200 OK\r\nHost: localhost\r\n\r\n");
+                    out.write(r200).get(); // now write complete response
+                    out.flush().get();
+                    out.close().get();
+            });
+        }).then([&ss] {
+            return ss.accept().then([] (accept_result ar) {
+                return seastar::async([sk = std::move(ar.connection)] () mutable {
+                    input_stream<char> in = sk.input();
+                    read_simple_http_request(in);
+                    output_stream<char> out = sk.output();
+                    sstring r200("HTTP/1.1 200 OK\r\nHost: localhost\r\n\r\n");
+                    out.write(r200).get(); // now write complete response
+                    out.flush().get();
+                    out.close().get();
+                });
+            });
+        });
+
+        future<> client_ex = seastar::async([&lcf] {
+            auto cln = http::experimental::client(std::make_unique<loopback_http_factory>(lcf), 2, http::experimental::client::retry_requests::yes);
+            auto req = http::request::make("GET", "test", "/test");
+            size_t count = 0;
+            BOOST_REQUIRE_EXCEPTION(cln.make_request(
+                                           std::move(req),
+                                           [&count](const http::reply&, input_stream<char>&&) {
+                                               ++count;
+                                               try {
+                                                   try {
+                                                       try {
+                                                           throw std::system_error(EPIPE, std::system_category());
+                                                       } catch (...) {
+                                                           std::throw_with_nested(std::runtime_error("Some exception"));
+                                                       }
+                                                   } catch (...) {
+                                                       std::throw_with_nested(std::system_error(ENOBUFS, std::system_category()));
+                                                   }
+                                               } catch (...) {
+                                                   return make_exception_future(std::current_exception());
+                                               }
+                                           },
+                                           http::reply::status_type::ok)
+                                        .get(),
+                                    std::system_error,
+                                    [](auto& ex) { return ex.code().value() == ENOBUFS; });
+
+            cln.close().get();
+            BOOST_REQUIRE_EQUAL(count, 2);
+        });
+
+        when_all(std::move(client_ex), std::move(server)).discard_result().get();
+    });
+}
+
 SEASTAR_TEST_CASE(test_client_response_parse_error) {
     return seastar::async([] {
         loopback_connection_factory lcf(1);
@@ -946,6 +1027,150 @@ SEASTAR_TEST_CASE(test_client_response_parse_error) {
                 return sstring(ex.what()).contains("Invalid http server response");
             });
 
+            cln.close().get();
+        });
+
+        when_all(std::move(client), std::move(server)).discard_result().get();
+    });
+}
+
+SEASTAR_TEST_CASE(test_client_abort_new_conn) {
+    class delayed_factory : public http::experimental::connection_factory {
+    public:
+        virtual future<connected_socket> make(abort_source* as) override {
+            SEASTAR_ASSERT(as != nullptr);
+            return sleep_abortable(std::chrono::seconds(1), *as).then([] {
+                return make_exception_future<connected_socket>(std::runtime_error("Shouldn't happen"));
+            });
+        }
+    };
+
+    return seastar::async([] {
+        auto cln = http::experimental::client(std::make_unique<delayed_factory>());
+        abort_source as;
+        auto f = cln.make_request(http::request::make("GET", "test", "/test"), [] (const auto& rep, auto&& in) {
+            return make_exception_future<>(std::runtime_error("Shouldn't happen"));
+        }, as, http::reply::status_type::ok);
+
+        as.request_abort();
+        BOOST_REQUIRE_THROW(f.get(), abort_requested_exception);
+        cln.close().get();
+    });
+}
+
+SEASTAR_TEST_CASE(test_client_abort_cached_conn) {
+    return seastar::async([] {
+        loopback_connection_factory lcf(1);
+        auto ss = lcf.get_server_socket();
+        promise<> server_paused;
+        promise<> server_resume;
+        future<> server = ss.accept().then([&] (accept_result ar) {
+            return seastar::async([&server_paused, &server_resume, sk = std::move(ar.connection)] () mutable {
+                input_stream<char> in = sk.input();
+                read_simple_http_request(in);
+                server_paused.set_value();
+                server_resume.get_future().get();
+                output_stream<char> out = sk.output();
+                out.close().get();
+            });
+        });
+
+        future<> client = seastar::async([&] {
+            auto cln = http::experimental::client(std::make_unique<loopback_http_factory>(lcf), 1 /* max connections */);
+            // this request gets handled by server and ...
+            auto f1 = cln.make_request(http::request::make("GET", "test", "/test"), [] (const auto& rep, auto&& in) {
+                return make_exception_future<>(std::runtime_error("Shouldn't happen"));
+            }, http::reply::status_type::ok);
+            server_paused.get_future().get();
+            // ... this should hang waiting for cached connection
+            abort_source as;
+            auto f2 = cln.make_request(http::request::make("GET", "test", "/test"), [] (const auto& rep, auto&& in) {
+                return make_exception_future<>(std::runtime_error("Shouldn't happen"));
+            }, as, http::reply::status_type::ok);
+
+            as.request_abort();
+            BOOST_REQUIRE_THROW(f2.get(), abort_requested_exception);
+            server_resume.set_value();
+            cln.close().get();
+            try {
+                f1.get();
+            } catch (...) {
+            }
+        });
+
+        when_all(std::move(client), std::move(server)).discard_result().get();
+    });
+}
+
+SEASTAR_TEST_CASE(test_client_abort_send_request) {
+    return seastar::async([] {
+        loopback_connection_factory lcf(1);
+        auto ss = lcf.get_server_socket();
+        future<> server = ss.accept().then([&] (accept_result ar) {
+            return seastar::async([sk = std::move(ar.connection)] () mutable {
+                input_stream<char> in = sk.input();
+                read_simple_http_request(in);
+                output_stream<char> out = sk.output();
+                out.close().get();
+            });
+        });
+
+        future<> client = seastar::async([&] {
+            auto cln = http::experimental::client(std::make_unique<loopback_http_factory>(lcf), 1 /* max connections */);
+            abort_source as;
+            auto req = http::request::make("GET", "test", "/test");
+            promise<> client_paused;
+            promise<> client_resume;
+            req.write_body("txt", [&] (output_stream<char>&& out) {
+                return seastar::async([&client_paused, &client_resume, out = std::move(out)] () mutable {
+                    auto cl = deferred_close(out);
+                    client_paused.set_value();
+                    client_resume.get_future().get();
+                    out.write("foo").get();
+                    out.flush().get();
+                });
+            });
+            auto f = cln.make_request(std::move(req), [] (const auto& rep, auto&& in) {
+                return make_exception_future<>(std::runtime_error("Shouldn't happen"));
+            }, as, http::reply::status_type::ok);
+            client_paused.get_future().get();
+            as.request_abort();
+            client_resume.set_value();
+            BOOST_REQUIRE_THROW(f.get(), abort_requested_exception);
+            cln.close().get();
+        });
+
+        when_all(std::move(client), std::move(server)).discard_result().get();
+    });
+}
+
+SEASTAR_TEST_CASE(test_client_abort_recv_response) {
+    return seastar::async([] {
+        loopback_connection_factory lcf(1);
+        auto ss = lcf.get_server_socket();
+        promise<> server_paused;
+        promise<> server_resume;
+        future<> server = ss.accept().then([&] (accept_result ar) {
+            return seastar::async([&server_paused, &server_resume, sk = std::move(ar.connection)] () mutable {
+                input_stream<char> in = sk.input();
+                read_simple_http_request(in);
+                server_paused.set_value();
+                server_resume.get_future().get();
+                output_stream<char> out = sk.output();
+                out.close().get();
+            });
+        });
+
+        future<> client = seastar::async([&] {
+            auto cln = http::experimental::client(std::make_unique<loopback_http_factory>(lcf), 1 /* max connections */);
+            abort_source as;
+            auto f = cln.make_request(http::request::make("GET", "test", "/test"), [] (const auto& rep, auto&& in) {
+                return make_exception_future<>(std::runtime_error("Shouldn't happen"));
+            }, as, http::reply::status_type::ok);
+            server_paused.get_future().get();
+            as.request_abort();
+            BOOST_REQUIRE_THROW(f.get(), abort_requested_exception);
+            server_resume.set_value();
             cln.close().get();
         });
 
@@ -1122,14 +1347,8 @@ struct echo_handler : public handler_base {
         if (!chunked_reply) {
             rep->write_body("txt", content);
         } else {
-            rep->write_body("txt", [ c = content ] (output_stream<char>&& out) {
-                return do_with(std::move(out), [ c = std::move(c) ] (output_stream<char>& out) {
-                    return out.write(std::move(c)).then([&out] {
-                        return out.flush().then([&out] {
-                            return out.close();
-                        });
-                    });
-                });
+            rep->write_body("txt", [ c = content ] (output_stream<char>& out) -> future<> {
+                co_await out.write(std::move(c));
             });
         }
         return make_ready_future<std::unique_ptr<http::reply>>(std::move(rep));
@@ -1249,13 +1468,9 @@ static future<> test_basic_content(bool streamed, bool chunked_reply) {
             {
                 fmt::print("Request with content-length body\n");
                 auto req = http::request::make("GET", "test", "/test");
-                req.write_body("txt", 12, [] (output_stream<char>&& out) {
-                    return seastar::async([out = std::move(out)] () mutable {
-                        out.write(sstring("1234567890")).get();
-                        out.write(sstring("AB")).get();
-                        out.flush().get();
-                        out.close().get();
-                    });
+                req.write_body("txt", 12, [] (output_stream<char>& out) -> future<> {
+                    co_await out.write(sstring("1234567890"));
+                    co_await out.write(sstring("AB"));
                 });
                 cln.make_request(std::move(req), [&] (const http::reply& resp, input_stream<char>&& in) {
                     if (!chunked_reply) {
@@ -1278,12 +1493,8 @@ static future<> test_basic_content(bool streamed, bool chunked_reply) {
                     jumbo_copy.get_write()[i] = jumbo[i];
                 }
                 auto req = http::request::make("GET", "test", "/test");
-                req.write_body("txt", size, [jumbo = std::move(jumbo)] (output_stream<char>&& out) mutable {
-                    return seastar::async([out = std::move(out), jumbo = std::move(jumbo)] () mutable {
-                        out.write(jumbo.get(), jumbo.size()).get();
-                        out.flush().get();
-                        out.close().get();
-                    });
+                req.write_body("txt", size, [jumbo = std::move(jumbo)] (output_stream<char>& out) -> future<> {
+                    co_await out.write(jumbo.get(), jumbo.size());
                 });
                 cln.make_request(std::move(req), [chunked_reply, size, jumbo_copy = std::move(jumbo_copy)] (const http::reply& resp, input_stream<char>&& in) mutable {
                     if (!chunked_reply) {
@@ -1297,15 +1508,30 @@ static future<> test_basic_content(bool streamed, bool chunked_reply) {
             }
 
             {
+                fmt::print("Request whose content-length body is written via a temporary_buffer\n");
+                auto req = http::request::make("GET", "test", "/test");
+                req.write_body("txt", 5, [] (output_stream<char>& out) -> future<> {
+                    const char* msg = "hello";
+                    co_await out.write(seastar::temporary_buffer<char>{msg, 5});
+                });
+                cln.make_request(std::move(req), [&] (const http::reply& resp, input_stream<char>&& in) {
+                    BOOST_REQUIRE_EQUAL(resp._status, http::reply::status_type::ok);
+                    if (!chunked_reply) {
+                        BOOST_REQUIRE_EQUAL(resp.content_length, 5);
+                    }
+                    return seastar::async([in = std::move(in)] () mutable {
+                        sstring body = util::read_entire_stream_contiguous(in).get();
+                        BOOST_REQUIRE_EQUAL(body, sstring("hello"));
+                    });
+                }).get();
+            }
+
+            {
                 fmt::print("Request with chunked body\n");
                 auto req = http::request::make("GET", "test", "/test");
-                req.write_body("txt", [] (auto&& out) -> future<> {
-                    return seastar::async([out = std::move(out)] () mutable {
-                        out.write(sstring("req")).get();
-                        out.write(sstring("1234\r\n7890")).get();
-                        out.flush().get();
-                        out.close().get();
-                    });
+                req.write_body("txt", [] (output_stream<char>& out) -> future<> {
+                    co_await out.write(sstring("req"));
+                    co_await out.write(sstring("1234\r\n7890"));
                 });
                 cln.make_request(std::move(req), [&] (const http::reply& resp, input_stream<char>&& in) {
                     BOOST_REQUIRE_EQUAL(resp._status, http::reply::status_type::ok);
@@ -1339,12 +1565,8 @@ static future<> test_basic_content(bool streamed, bool chunked_reply) {
             {
                 fmt::print("Request with incomplete content-length body\n");
                 auto req = http::request::make("GET", "test", "/test");
-                req.write_body("txt", 12, [] (output_stream<char>&& out) {
-                    return seastar::async([out = std::move(out)] () mutable {
-                        out.write(sstring("1234567890A")).get();
-                        out.flush().get();
-                        out.close().get();
-                    });
+                req.write_body("txt", 12, [] (output_stream<char>& out) -> future<> {
+                    co_await out.write(sstring("1234567890A"));
                 });
                 BOOST_REQUIRE_THROW(cln.make_request(std::move(req), [] (const auto& resp, auto&& in) {
                     BOOST_REQUIRE(false); // should throw before handling response
@@ -1483,7 +1705,7 @@ SEASTAR_TEST_CASE(case_insensitive_header_reply) {
 }
 
 SEASTAR_THREAD_TEST_CASE(multiple_connections) {
-    loopback_connection_factory lcf(1);
+    loopback_connection_factory lcf = loopback_connection_factory::with_pending_capacity(smp::count + 1, 1);
     http_server server("test");
     httpd::http_server_tester::listeners(server).emplace_back(lcf.get_server_socket());
     socket_address addr{ipv4_addr()};
@@ -1672,4 +1894,59 @@ BOOST_AUTO_TEST_CASE(test_path_decode_changed) {
 
     auto expected_chars = seastar::sstring{" "};
     BOOST_REQUIRE_EQUAL(result, expected_chars);
+}
+
+namespace seastar::http {
+std::ostream& boost_test_print_type(std::ostream& os, reply::status_class sc) {
+    constexpr std::string_view status_strings[] {
+        "1xx: Informational",
+        "2xx: Success",
+        "3xx: Redirection",
+        "4xx: Client Error",
+        "5xx: Server Error",
+        "Unclassified"
+    };
+    auto status = static_cast<std::underlying_type_t<reply::status_class>>(sc) - 1u;
+    if (status < std::size(status_strings)) {
+        return os << status_strings[status];
+    }
+    return os << "Unclassified";
+}
+} // namespace seastar::http
+
+BOOST_AUTO_TEST_CASE(test_http_status_classification) {
+    size_t informational = 0;
+    size_t success = 0;
+    size_t redirection = 0;
+    size_t client_error = 0;
+    size_t server_error = 0;
+    size_t unclassified = 0;
+    for (auto i = -100; i < 700; ++i) {
+        auto classification = http::reply::classify_status(static_cast<http::reply::status_type>(i));
+        if (i >= 100 && i < 200) {
+            ++informational;
+            BOOST_REQUIRE_EQUAL(classification, http::reply::status_class::informational);
+        } else if (i >= 200 && i < 300) {
+            ++success;
+            BOOST_REQUIRE_EQUAL(classification, http::reply::status_class::success);
+        } else if (i >= 300 && i < 400) {
+            ++redirection;
+            BOOST_REQUIRE_EQUAL(classification, http::reply::status_class::redirection);
+        } else if (i >= 400 && i < 500) {
+            ++client_error;
+            BOOST_REQUIRE_EQUAL(classification, http::reply::status_class::client_error);
+        } else if (i >= 500 && i < 600) {
+            ++server_error;
+            BOOST_REQUIRE_EQUAL(classification, http::reply::status_class::server_error);
+        } else {
+            ++unclassified;
+            BOOST_REQUIRE_EQUAL(classification, http::reply::status_class::unclassified);
+        }
+    }
+    BOOST_REQUIRE_EQUAL(informational, 100);
+    BOOST_REQUIRE_EQUAL(success, 100);
+    BOOST_REQUIRE_EQUAL(redirection, 100);
+    BOOST_REQUIRE_EQUAL(client_error, 100);
+    BOOST_REQUIRE_EQUAL(server_error, 100);
+    BOOST_REQUIRE_EQUAL(unclassified, 300);
 }

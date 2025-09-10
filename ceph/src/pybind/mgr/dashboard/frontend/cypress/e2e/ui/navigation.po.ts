@@ -8,6 +8,13 @@ export class NavigationPageHelper extends PageHelper {
   navigations = [
     { menu: 'Dashboard', component: 'cd-dashboard' },
     {
+      menu: 'Multi-Cluster',
+      submenus: [
+        { menu: 'Overview', component: 'cd-multi-cluster' },
+        { menu: 'Manage Clusters', component: 'cd-multi-cluster-list' }
+      ]
+    },
+    {
       menu: 'Cluster',
       submenus: [
         { menu: 'Pools', component: 'cd-pool-list' },
@@ -41,7 +48,8 @@ export class NavigationPageHelper extends PageHelper {
       menu: 'File',
       submenus: [
         { menu: 'File Systems', component: 'cd-cephfs-list' },
-        { menu: 'NFS', component: 'cd-error' }
+        { menu: 'NFS', component: 'cd-error' },
+        { menu: 'SMB', component: 'cd-smb-cluster-list' }
       ]
     },
     {
@@ -68,7 +76,7 @@ export class NavigationPageHelper extends PageHelper {
   }
 
   getMenuToggler() {
-    return cy.get('[aria-label="toggle sidebar visibility"]');
+    return cy.get('[data-testid="main-menu-toggler"]');
   }
 
   checkNavigations(navs: any) {
@@ -78,7 +86,11 @@ export class NavigationPageHelper extends PageHelper {
     cy.intercept('/ui-api/block/rbd/status', { fixture: 'block-rbd-status.json' });
 
     navs.forEach((nav: any) => {
-      cy.contains('.simplebar-content li.nav-item a', nav.menu).click();
+      cy.get('cds-sidenav-item').each(($link) => {
+        if ($link.text().trim() === nav.menu.trim()) {
+          cy.wrap($link).click();
+        }
+      });
       if (nav.submenus) {
         this.checkNavSubMenu(nav.menu, nav.submenus);
       } else {
@@ -89,8 +101,10 @@ export class NavigationPageHelper extends PageHelper {
 
   checkNavSubMenu(menu: any, submenu: any) {
     submenu.forEach((nav: any) => {
-      cy.contains('.simplebar-content li.nav-item', menu).within(() => {
-        cy.contains(`ul.list-unstyled li a`, nav.menu).click();
+      cy.get('cds-sidenav-item').each(($link) => {
+        if ($link.text().trim() === menu.trim()) {
+          cy.contains(`cds-sidenav-menu`, nav.menu).click();
+        }
       });
     });
   }

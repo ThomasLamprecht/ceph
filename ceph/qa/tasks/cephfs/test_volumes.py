@@ -13,9 +13,11 @@ from io import StringIO
 
 from tasks.cephfs.cephfs_test_case import CephFSTestCase
 from tasks.cephfs.fuse_mount import FuseMount
-from teuthology.exceptions import CommandFailedError
+from teuthology.contextutil import safe_while
+from teuthology.exceptions import CommandFailedError, MaxWhileTries
 
 log = logging.getLogger(__name__)
+
 
 class TestVolumesHelper(CephFSTestCase):
     """Helper class for testing FS volume, subvolume group and subvolume operations."""
@@ -35,19 +37,26 @@ class TestVolumesHelper(CephFSTestCase):
     def _raw_cmd(self, *args):
         return self.get_ceph_cmd_stdout(args)
 
-    def __check_clone_state(self, state, clone, clone_group=None, timo=120):
-        check = 0
+    def __check_clone_state(self, states, clone, clone_group=None, timo=120):
+        if isinstance(states, str):
+            states = (states, )
+
         args = ["clone", "status", self.volname, clone]
         if clone_group:
             args.append(clone_group)
         args = tuple(args)
-        while check < timo:
-            result = json.loads(self._fs_cmd(*args))
-            if result["status"]["state"] == state:
-                break
-            check += 1
-            time.sleep(1)
-        self.assertTrue(check < timo)
+
+        msg = (f'Executed cmd "{args}" {timo} times; clone was never in '
+               f'"{states}" state(s).')
+
+        with safe_while(tries=timo, sleep=1, action=msg) as proceed:
+            while proceed():
+                result = json.loads(self._fs_cmd(*args))
+                current_state = result["status"]["state"]
+
+                log.debug(f'current clone state = {current_state}')
+                if current_state in states:
+                    return
 
     def _get_clone_status(self, clone, clone_group=None):
         args = ["clone", "status", self.volname, clone]
@@ -56,6 +65,23 @@ class TestVolumesHelper(CephFSTestCase):
         args = tuple(args)
         result = json.loads(self._fs_cmd(*args))
         return result
+
+    def _wait_for_clone_to_be_pending(self, clone, clone_group=None,
+                                      timo=120):
+        # check for "in-progress" state too along with "pending" state, because
+        # if former has occurred it means latter has occured before (which can
+        # happen for such a small time that it is easy to miss) and it won't
+        # occur again.
+        states = ('pending', 'in-progress')
+        self.__check_clone_state(states, clone, clone_group, timo)
+
+    def _wait_for_clone_to_be_canceled(self, clone, clone_group=None,
+                                          timo=120):
+        # check for "cancelled" state too along with "complete" state, because
+        # it takes some time for a clone job to be cancelled and in that time
+        # a clone job might finish.
+        states = ('canceled', 'complete')
+        self.__check_clone_state(states, clone, clone_group, timo)
 
     def _wait_for_clone_to_complete(self, clone, clone_group=None, timo=120):
         self.__check_clone_state("complete", clone, clone_group, timo)
@@ -69,18 +95,15 @@ class TestVolumesHelper(CephFSTestCase):
     def _check_clone_canceled(self, clone, clone_group=None):
         self.__check_clone_state("canceled", clone, clone_group, timo=1)
 
-    def _get_subvolume_snapshot_path(self, subvolume, snapshot, source_group, subvol_path, source_version):
-        if source_version == 2:
-            # v2
-            if subvol_path is not None:
-                (base_path, uuid_str) = os.path.split(subvol_path)
-            else:
-                (base_path, uuid_str) = os.path.split(self._get_subvolume_path(self.volname, subvolume, group_name=source_group))
-            return os.path.join(base_path, ".snap", snapshot, uuid_str)
+    def _get_subvolume_snapshot_path(self, subvol_name, snap_name, group_name):
+        cmd = (f'fs subvolume snapshot getpath {self.volname} {subvol_name} '
+               f'{snap_name}')
+        if group_name:
+            cmd += f' {group_name}'
 
-        # v1
-        base_path = self._get_subvolume_path(self.volname, subvolume, group_name=source_group)
-        return os.path.join(base_path, ".snap", snapshot)
+        cephfs_snap_path = self.get_ceph_cmd_stdout(cmd).strip()
+        # remove leading '/' from cephfs_snap_path
+        return os.path.join(self.mount_a.hostfs_mntpt, cephfs_snap_path[1:])
 
     def _verify_clone_attrs(self, source_path, clone_path):
         path1 = source_path
@@ -142,7 +165,7 @@ class TestVolumesHelper(CephFSTestCase):
                       subvol_path=None, source_version=2, timo=120):
         # pass in subvol_path (subvolume path when snapshot was taken) when subvolume is removed
         # but snapshots are retained for clone verification
-        path1 = self._get_subvolume_snapshot_path(subvolume, snapshot, source_group, subvol_path, source_version)
+        path1 = self._get_subvolume_snapshot_path(subvolume, snapshot, source_group)
         path2 = self._get_subvolume_path(self.volname, clone, group_name=clone_group)
 
         check = 0
@@ -221,7 +244,7 @@ class TestVolumesHelper(CephFSTestCase):
         # remove the leading '/', and trailing whitespaces
         return path[1:].rstrip()
 
-    def  _get_subvolume_info(self, vol_name, subvol_name, group_name=None):
+    def _get_subvolume_info(self, vol_name, subvol_name, group_name=None):
         args = ["subvolume", "info", vol_name, subvol_name]
         if group_name:
             args.append(group_name)
@@ -280,6 +303,8 @@ class TestVolumesHelper(CephFSTestCase):
             filename = "{0}.{1}".format(TestVolumes.TEST_FILE_NAME_PREFIX, i)
             self.mount_a.write_n_mb(os.path.join(io_path, filename), file_size)
 
+        return number_of_files * file_size * 1024 * 1024
+
     def _do_subvolume_io_mixed(self, subvolume, subvolume_group=None):
         subvolpath = self._get_subvolume_path(self.volname, subvolume, group_name=subvolume_group)
 
@@ -296,9 +321,16 @@ class TestVolumesHelper(CephFSTestCase):
         self.mount_a.run_shell(["sudo", "chown", "-h", "65534:65534", sym_path2], omit_sudo=False)
 
     def _wait_for_trash_empty(self, timeout=60):
-        # XXX: construct the trash dir path (note that there is no mgr
-        # [sub]volume interface for this).
-        trashdir = os.path.join("./", "volumes", "_deleting")
+        trashdir = 'volumes/_deleting'
+
+        try:
+            self.mount_a.stat(trashdir)
+        except CommandFailedError as e:
+            if e.exitstatus == errno.ENOENT:
+                return
+            else:
+                raise
+
         self.mount_a.wait_for_dir_empty(trashdir, timeout=timeout)
 
     def _wait_for_subvol_trash_empty(self, subvol, group="_nogroup", timeout=30):
@@ -413,32 +445,6 @@ class TestVolumesHelper(CephFSTestCase):
 
 class TestVolumes(TestVolumesHelper):
     """Tests for FS volume operations."""
-    def test_volume_create(self):
-        """
-        That the volume can be created and then cleans up
-        """
-        volname = self._gen_vol_name()
-        self._fs_cmd("volume", "create", volname)
-        volumels = json.loads(self._fs_cmd("volume", "ls"))
-
-        if not (volname in ([volume['name'] for volume in volumels])):
-            raise RuntimeError("Error creating volume '{0}'".format(volname))
-
-        # check that the pools were created with the correct config
-        pool_details = json.loads(self._raw_cmd("osd", "pool", "ls", "detail", "--format=json"))
-        pool_flags = {}
-        for pool in pool_details:
-            pool_flags[pool["pool_id"]] = pool["flags_names"].split(",")
-
-        volume_details = json.loads(self._fs_cmd("get", volname, "--format=json"))
-        for data_pool_id in volume_details['mdsmap']['data_pools']:
-            self.assertIn("bulk", pool_flags[data_pool_id])
-        meta_pool_id = volume_details['mdsmap']['metadata_pool']
-        self.assertNotIn("bulk", pool_flags[meta_pool_id])
-
-        # clean up
-        self._fs_cmd("volume", "rm", volname, "--yes-i-really-mean-it")
-
     def test_volume_ls(self):
         """
         That the existing and the newly created volumes can be listed and
@@ -636,6 +642,185 @@ class TestVolumes(TestVolumesHelper):
                          "'pending_subvolume_deletions' should not be present in absence"
                          " of subvolumegroup")
 
+
+class TestVolumeCreate(TestVolumesHelper):
+    '''
+    Contains test for "ceph fs volume create" command.
+    '''
+
+    def test_volume_create(self):
+        """
+        That the volume can be created and then cleans up
+        """
+        volname = self._gen_vol_name()
+        self._fs_cmd("volume", "create", volname)
+        volumels = json.loads(self._fs_cmd("volume", "ls"))
+
+        if not (volname in ([volume['name'] for volume in volumels])):
+            raise RuntimeError("Error creating volume '{0}'".format(volname))
+
+        # check that the pools were created with the correct config
+        pool_details = json.loads(self._raw_cmd("osd", "pool", "ls", "detail", "--format=json"))
+        pool_flags = {}
+        for pool in pool_details:
+            pool_flags[pool["pool_id"]] = pool["flags_names"].split(",")
+
+        volume_details = json.loads(self._fs_cmd("get", volname, "--format=json"))
+        for data_pool_id in volume_details['mdsmap']['data_pools']:
+            self.assertIn("bulk", pool_flags[data_pool_id])
+        meta_pool_id = volume_details['mdsmap']['metadata_pool']
+        self.assertNotIn("bulk", pool_flags[meta_pool_id])
+
+        # clean up
+        self._fs_cmd("volume", "rm", volname, "--yes-i-really-mean-it")
+
+    def test_with_both_pool_names(self):
+        '''
+        Test that "ceph fs volume create" command accepts metadata pool name
+        and data pool name as arguments and uses these pools to create a new
+        volume.
+        '''
+        v = self._gen_vol_name()
+
+        meta = 'meta4521'
+        data = 'data4521'
+        self.run_ceph_cmd(f'osd pool create {meta}')
+        self.run_ceph_cmd(f'osd pool create {data}')
+
+        self.run_ceph_cmd(f'fs volume create {v} --data-pool {data} '
+                          f'--meta-pool {meta}')
+
+        outer_break_ = False
+        # once in few runs "fs ls" output didn't have above created volume.
+        # giving it a bit time should sort that out.
+        with safe_while(tries=3, sleep=1) as proceed:
+            while proceed():
+                o = self.get_ceph_cmd_stdout('fs ls --format json-pretty')
+                o = json.loads(o)
+                for d in o:
+                    if d['name'] == v:
+                        self.assertEqual(meta, d['metadata_pool'])
+                        self.assertIn(data, d['data_pools'])
+                        outer_break_ = True
+                        break
+                    else:
+                        continue
+                if outer_break_:
+                    break
+
+    def test_with_data_pool_name_only(self):
+        '''
+        Test that "ceph fs volume create" command runs successfully when data
+        pool name is passed, the data pool name aborts with an complain about
+        not passing metadata pool name.
+         '''
+        v = self._gen_vol_name()
+
+        data = 'data4521'
+        self.run_ceph_cmd(f'osd pool create {data}')
+
+        self.negtest_ceph_cmd(f'fs volume create {v} --data-pool {data}',
+                              retval=errno.EINVAL,
+                              errmsgs=('metadata pool name isn\'t passed'))
+
+        o = self.get_ceph_cmd_stdout('fs ls --format json-pretty')
+        o = json.loads(o)
+        for d in o:
+            if v == d['name']:
+                raise RuntimeError(f'volume "{v}" was found in "fs ls" output')
+        else:
+            pass
+
+    def test_with_metadata_pool_name_only(self):
+        '''
+        Test that when only metadata pool name is passed to "ceph fs volume
+        create" command, the command aborts with an error complaining about
+        not passing data pool name.
+        '''
+        v = self._gen_vol_name()
+        meta = 'meta4521'
+        self.run_ceph_cmd(f'osd pool create {meta}')
+
+        self.negtest_ceph_cmd(f'fs volume create {v} --meta-pool {meta}',
+                              retval=errno.EINVAL,
+                              errmsgs=('data pool name isn\'t passed'))
+
+        o = self.get_ceph_cmd_stdout('fs ls --format json-pretty')
+        o = json.loads(o)
+        for d in o:
+            if v == d['name']:
+                raise RuntimeError(f'volume "{v}" was found in "fs ls" output')
+        else:
+            pass
+
+    def test_with_nonempty_meta_pool_name(self):
+        '''
+        Test that when meta pool name passed to the command "ceph fs volume
+        create" is an non-empty of pool, the command aborts with an appropriate
+        error number and error message.
+        '''
+        v = self._gen_vol_name()
+        meta = f'cephfs.{v}.meta'
+        data = f'cephfs.{v}.data'
+
+        self.run_ceph_cmd(f'osd pool create {meta}')
+        self.run_ceph_cmd(f'osd pool create {data}')
+        self.mon_manager.controller.run(args='echo somedata > file1')
+        self.mon_manager.do_rados(['put', 'obj1', 'file1', '--pool', meta])
+        # XXX
+        log.info('sleeping for 10 secs for stats to be generated so that "fs '
+                 'new" command, which is called by "fs volume create" command, '
+                 'can detect that the metadata pool is not empty and therefore '
+                 'abort with an error.')
+        time.sleep(10)
+
+        try:
+            # actual test...
+            self.negtest_ceph_cmd(f'fs volume create {v} --meta-pool {meta} '
+                                  f'--data-pool {data}',
+                                  retval=errno.EINVAL,
+                                  errmsgs=('already contains some objects. use '
+                                           'an empty pool instead'))
+
+            # being extra sure that volume wasn't created
+            o = self.get_ceph_cmd_stdout('fs ls --format json-pretty')
+            o = json.loads(o)
+            for d in o:
+                if v == d['name']:
+                    raise RuntimeError(f'volume "{v}" was found in "fs ls" output')
+            else:
+                pass
+        # regardless of how this test goes, ensure that these leftover pools
+        # are deleted. else, they might mess up the teardown or setup code
+        # somehow.
+        finally:
+            self.run_ceph_cmd(f'osd pool rm {meta} {meta} '
+                               '--yes-i-really-really-mean-it')
+            self.run_ceph_cmd(f'osd pool rm {data} {data} '
+                               '--yes-i-really-really-mean-it')
+
+    def test_user_created_pool_isnt_deleted(self):
+        '''
+        Test that the user created pool is not deleted by this commmand if it
+        has been passed to it along with a non-existent pool name.
+        '''
+        data_pool = 'cephfs.b.data'
+        non_existent_meta_pool = 'nonexistent-pool'
+
+        self.run_ceph_cmd(f'osd pool create {data_pool}')
+        o = self.get_ceph_cmd_stdout('osd pool ls')
+        self.assertIn(data_pool, o)
+        self.assertNotIn(non_existent_meta_pool, o)
+
+        self.negtest_ceph_cmd(
+            args=f'fs volume create b --data-pool {data_pool} --meta-pool '
+                  f'{non_existent_meta_pool}',
+            retval=errno.ENOENT,
+            errmsgs=f'pool \'{non_existent_meta_pool}\' does not exist')
+
+        o = self.get_ceph_cmd_stdout('osd pool ls')
+        self.assertIn(data_pool, o)
+        self.assertNotIn(non_existent_meta_pool, o)
 
 class TestRenameCmd(TestVolumesHelper):
 
@@ -2067,6 +2252,29 @@ class TestSubvolumes(TestVolumesHelper):
         v = json.loads(v)
         self.assertEqual(v, attrs)
 
+    def test_subvolume_clone_charmap(self):
+        subvolume = self._gen_subvol_name()
+        attrs = {
+          "normalization": "nfkd",
+          "encoding": "utf8",
+          "casesensitive": False,
+        }
+        self._fs_cmd("subvolume", "create", self.volname, subvolume)
+        for setting, value in attrs.items():
+            self._fs_cmd("subvolume", "charmap", "set", self.volname, subvolume, setting, str(value))
+
+        snapshot = "snap1"
+        self._fs_cmd("subvolume", "snapshot", "create", self.volname, subvolume, snapshot)
+        clone = "clone"
+        self._fs_cmd("subvolume", "snapshot", "clone", self.volname, subvolume, snapshot, clone)
+
+        # wait for clone to complete
+        self._wait_for_clone_to_complete(clone)
+
+        v = self._fs_cmd("subvolume", "charmap", "get", self.volname, clone)
+        v = json.loads(v)
+        self.assertEqual(v, attrs)
+
     def test_subvolume_charmap_rm(self):
         subvolume = self._gen_subvol_name()
         self._fs_cmd("subvolume", "create", self.volname, subvolume)
@@ -2175,12 +2383,33 @@ class TestSubvolumes(TestVolumesHelper):
         # get subvolume metadata
         subvol_info = json.loads(self._get_subvolume_info(self.volname, subvolume))
         self.assertNotEqual(len(subvol_info), 0)
-        self.assertEqual(subvol_info["pool_namespace"], "fsvolumens_" + subvolume)
+        pool_namespace = subvol_info["pool_namespace"]
+        self.assertEqual(pool_namespace, f'fsvolumens___nogroup_{subvolume}')
 
         # remove subvolumes
         self._fs_cmd("subvolume", "rm", self.volname, subvolume)
 
         # verify trash dir is clean
+        self._wait_for_trash_empty()
+
+    def test_for_group_name_in_pool_namespace(self):
+        '''
+        Test that subvolume group name is included in the pool namespace of a
+        subvolume.
+        '''
+        sv = self._gen_subvol_name()
+        svg = self._gen_subvol_grp_name()
+        self.run_ceph_cmd(f'fs subvolumegroup create {self.volname} {svg}')
+        self.run_ceph_cmd(f'fs subvolume create {self.volname} {sv} {svg} '
+                          f'--namespace-isolated')
+
+        subvol_info = self._get_subvolume_info(self.volname, sv, svg)
+        subvol_info = json.loads(subvol_info)
+        pool_namespace = subvol_info['pool_namespace']
+        self.assertEqual(pool_namespace, f'fsvolumens__{svg}_{sv}')
+
+        self.run_ceph_cmd(f'fs subvolume rm {self.volname} {sv} {svg}')
+        self.run_ceph_cmd(f'fs subvolumegroup rm {self.volname} {svg}')
         self._wait_for_trash_empty()
 
     def test_subvolume_create_with_auto_cleanup_on_fail(self):
@@ -2416,7 +2645,7 @@ class TestSubvolumes(TestVolumesHelper):
         self._fs_cmd("subvolume", "create", self.volname, subvolume)
 
         # set earmark
-        earmark = "smb.test"
+        earmark = "smb"
         self._fs_cmd("subvolume", "earmark", "set", self.volname, subvolume, "--earmark", earmark)
 
         # get earmark
@@ -2429,7 +2658,7 @@ class TestSubvolumes(TestVolumesHelper):
         self._fs_cmd("subvolume", "create", self.volname, subvolume)
 
         # set earmark
-        earmark = "smb.test"
+        earmark = "smb"
         self._fs_cmd("subvolume", "earmark", "set", self.volname, subvolume, "--earmark", earmark)
 
         # remove earmark
@@ -2514,6 +2743,70 @@ class TestSubvolumes(TestVolumesHelper):
             except CommandFailedError as ce:
                 self.assertEqual(ce.exitstatus, errno.ENOENT, error_message)
 
+    def test_subvolume_create_without_normalization(self):
+        # create subvolume
+        subvolume = self._gen_subvol_name()
+        self._fs_cmd("subvolume", "create", self.volname, subvolume)
+
+        # make sure it exists
+        subvolpath = self._get_subvolume_path(self.volname, subvolume)
+        self.assertNotEqual(subvolpath, None)
+
+        # check normalization
+        try:
+            self._fs_cmd("subvolume", "charmap", "get", self.volname, subvolume, "normalization")
+        except CommandFailedError as ce:
+            self.assertEqual(ce.exitstatus, errno.ENODATA)
+        else:
+            self.fail("expected the 'fs subvolume charmap' command to fail")
+
+    def test_subvolume_create_with_normalization(self):
+        # create subvolume
+        subvolume = self._gen_subvol_name()
+        self._fs_cmd("subvolume", "create", self.volname, subvolume, "--normalization", "nfc")
+
+        # make sure it exists
+        subvolpath = self._get_subvolume_path(self.volname, subvolume)
+        self.assertNotEqual(subvolpath, None)
+
+        # check normalization
+        normalization = self._fs_cmd("subvolume", "charmap", "get", self.volname, subvolume, "normalization")
+        self.assertEqual(normalization.strip(), "nfc")
+
+    def test_subvolume_create_without_case_sensitivity(self):
+        # create subvolume
+        subvolume = self._gen_subvol_name()
+        self._fs_cmd("subvolume", "create", self.volname, subvolume)
+
+        # make sure it exists
+        subvolpath = self._get_subvolume_path(self.volname, subvolume)
+        self.assertNotEqual(subvolpath, None)
+
+        # check case sensitivity
+        try:
+            self._fs_cmd("subvolume", "charmap", "get", self.volname, subvolume, "casesensitive")
+        except CommandFailedError as ce:
+            self.assertEqual(ce.exitstatus, errno.ENODATA)
+        else:
+            self.fail("expected the 'fs subvolume charmap' command to fail")
+
+    def test_subvolume_create_with_case_insensitive(self):
+        # create subvolume
+        subvolume = self._gen_subvol_name()
+        self._fs_cmd("subvolume", "create", self.volname, subvolume, "--casesensitive=0")
+
+        # make sure it exists
+        subvolpath = self._get_subvolume_path(self.volname, subvolume)
+        self.assertNotEqual(subvolpath, None)
+
+        # check case sensitivity
+        case_sensitive = self._fs_cmd("subvolume", "charmap", "get", self.volname, subvolume, "casesensitive")
+        self.assertEqual(case_sensitive.strip(), "0")
+
+        # check normalization (it's implicitly enabled by --case-insensitive, with default value 'nfd')
+        normalization = self._fs_cmd("subvolume", "charmap", "get", self.volname, subvolume, "normalization")
+        self.assertEqual(normalization.strip(), "nfd")
+
     def test_subvolume_expand(self):
         """
         That a subvolume can be expanded in size and its quota matches the expected size.
@@ -2587,7 +2880,7 @@ class TestSubvolumes(TestVolumesHelper):
             self.assertIn(feature, subvol_info["features"], msg="expected feature '{0}' in subvolume".format(feature))
 
         # set earmark
-        earmark = "smb.test"
+        earmark = "smb"
         self._fs_cmd("subvolume", "earmark", "set", self.volname, subvolume, "--earmark", earmark)
 
         subvol_info = json.loads(self._get_subvolume_info(self.volname, subvolume))
@@ -4373,6 +4666,353 @@ class TestSubvolumes(TestVolumesHelper):
         # verify trash dir is clean.
         self._wait_for_trash_empty()
 
+    def test_create_when_subvol_name_is_too_long(self):
+        '''
+        255 chars of subvol name + 7 chars of (':', '_' and '.meta') and 0
+        chars for default group name is greater than 256 chars, therefore
+        subvol meta file issue should be tested.
+        '''
+        subvolname = 's' * 255
+        self.negtest_ceph_cmd(
+            f'fs subvolume create {self.volname} {subvolname}',
+            retval=errno.ENAMETOOLONG,
+            errmsgs='Error ENAMETOOLONG: use shorter group or subvol name, '
+                    'combination of both should be less than 249 characters')
+
+    def test_create_when_subvol_group_name_is_too_long(self):
+        '''
+        248 chars of group name + 7 chars of (':', '_' and '.meta') and 7
+        chars for subvol name is greater than 256 chars, therefore subvol
+        meta file issue should be tested.
+        '''
+        groupname = 'g' * 248
+        self.run_ceph_cmd(
+            f'fs subvolumegroup create {self.volname} {groupname}')
+        subvolname = 's' * 7
+        self.negtest_ceph_cmd(
+            f'fs subvolume create {self.volname} {subvolname} --group-name '
+            f'{groupname}',
+            retval=errno.ENAMETOOLONG,
+            errmsgs='Error ENAMETOOLONG: use shorter group or subvol name, '
+                    'combination of both should be less than 249 characters')
+
+class TestPausePurging(TestVolumesHelper):
+    '''
+    Tests related to config "mgr/volumes/pause_purging".
+    '''
+
+    CONF_OPT = 'mgr/volumes/pause_purging'
+
+    def tearDown(self):
+        # every test will change value of this config option as per its need.
+        # assure that this config option's default value is re-stored during
+        # tearDown() so that there's zero chance that it interferes with next
+        # test.
+        self.config_set('mgr', self.CONF_OPT, False)
+
+        # ensure purge threads have no jobs left from previous test so that
+        # next test doesn't have to face unnecessary complications.
+        self._wait_for_trash_empty()
+
+        super().tearDown()
+
+    def _get_sv_path(self, v, sv):
+        sv_path = self.get_ceph_cmd_stdout(f'fs subvolume getpath {v} {sv}')
+        sv_path = sv_path.strip()
+        # delete slash at the beginning of path
+        sv_path = sv_path[1:]
+
+        sv_path = os.path.join(self.mount_a.mountpoint, sv_path)
+        return sv_path
+
+    def _assert_sv_is_absent_in_trash(self, sv, sv_path, sv_files):
+        uuid = self.mount_a.get_shell_stdout('sudo ls volumes/_deleting').\
+            strip()
+
+        trash_sv_path = sv_path.replace('_nogroup', f'_deleting/{uuid}')
+        trash_sv_path = trash_sv_path.replace(sv, '')
+
+        try:
+            sv_files_new = self.mount_a.get_shell_stdout(
+                f'sudo ls {trash_sv_path}')
+        except CommandFailedError as cfe:
+            # in case dir for subvol including files in it are deleted
+            self.assertEqual(cfe.exitstatus, 2)
+            return
+
+        # in case dir for subvol is undeleted yet (but files inside it are).
+        for filename in sv_files:
+            self.assertNotIn(filename, sv_files_new)
+
+    def _assert_trashed_sv_is_unpurged(self, sv, sv_path, sv_files):
+        uuid = self.mount_a.get_shell_stdout('sudo ls volumes/_deleting').\
+                    strip()
+
+        trash_sv_path = sv_path.replace('_nogroup', f'_deleting/{uuid}')
+        trash_sv_path = trash_sv_path.replace(sv, '')
+        sv_files_new = self.mount_a.get_shell_stdout(f'sudo ls {trash_sv_path}').\
+            strip()
+
+        for filename in sv_files:
+            self.assertIn(filename, sv_files_new)
+
+    def test_when_paused_subvol_is_trashed_but_stays_unpurged(self):
+        '''
+        Test that when MGR config option mgr/volumes/pause_purging is
+        set to true, running "ceph fs subvolume rm" will move the subvolume
+        to trash but not purge it, that is delete the subvolume from trash.
+        '''
+        v = self.volname
+        sv = 'sv1'
+
+        self.run_ceph_cmd(f'fs subvolume create {v} {sv} --mode=777')
+
+        self.config_set('mgr', self.CONF_OPT, True)
+        sv_path = self._get_sv_path(v, sv)
+        self._do_subvolume_io(sv, number_of_files=10)
+        sv_files = self.mount_a.get_shell_stdout(f'sudo ls {sv_path}').\
+            strip().split('\n')
+
+        self.run_ceph_cmd(f'fs subvolume rm {v} {sv}')
+        # wait for a bit to ensure that trashed subvolume is not picked by
+        # purged threads eventually.
+        with safe_while(tries=1, sleep=7) as proceed:
+            try:
+                while proceed():
+                    self._assert_trashed_sv_is_unpurged(sv, sv_path, sv_files)
+            except MaxWhileTries:
+                pass
+
+    def test_on_resuming_unpurged_subvol_is_purged(self):
+        '''
+        Test that when MGR config option mgr/volumes/pause_purging is
+        is set to false, trashed but unpurged subvolume is purged (fully).
+        '''
+        v = self.volname
+        sv = 'sv1'
+
+        self.run_ceph_cmd(f'fs subvolume create {v} {sv} --mode=777')
+        self.config_set('mgr', self.CONF_OPT, True)
+        sv_path = self._get_sv_path(v, sv)
+        self._do_subvolume_io(sv, number_of_files=10)
+        sv_files = self.mount_a.get_shell_stdout(f'sudo ls {sv_path}').\
+            strip().split('\n')
+
+        self.run_ceph_cmd(f'fs subvolume rm {v} {sv}')
+        # wait for a bit to ensure that trashed subvolume is not picked by
+        # purged threads eventually.
+        with safe_while(tries=1, sleep=7) as proceed:
+            try:
+                while proceed():
+                    self._assert_trashed_sv_is_unpurged(sv, sv_path, sv_files)
+            except MaxWhileTries:
+                pass
+
+        # XXX actual test here: test that unpurged subvol is purged
+        self.config_set('mgr', self.CONF_OPT, False)
+        self._wait_for_trash_empty()
+
+    def _get_trashed_sv_path(self, sv, sv_path):
+        uuid = self.mount_a.get_shell_stdout('sudo ls volumes/_deleting').\
+            strip()
+
+        trashed_sv_path = sv_path.replace('_nogroup', f'_deleting/{uuid}')
+        trashed_sv_path = trashed_sv_path.replace(sv, '')
+        return trashed_sv_path
+
+    def _get_num_of_files_in_trashed_sv(self, trashed_sv_path):
+        trashed_sv_files = self.mount_a.get_shell_stdout(
+            f'sudo ls {trashed_sv_path}').strip().split('\n')
+        return len(trashed_sv_files)
+
+    def _assert_trashed_sv_has_num_of_files(self, trashed_sv_path,
+                                            num_of_files):
+        sv_files = self.mount_a.get_shell_stdout(
+            f'sudo ls {trashed_sv_path}').strip().split('\n')
+
+        self.assertEqual(len(sv_files),  num_of_files)
+
+    def test_pausing_halts_ongoing_purge(self):
+        '''
+        Test that when MGR config option mgr/volumes/pause_purging is
+        set to true, running "ceph fs subvolume rm" will move the subvolume
+        to trash but (asynchronous) purge of the subvolume won't happen till
+        this config option is not explicitly set to False.
+        '''
+        v = self.volname
+        sv = 'sv1'
+
+        self.run_ceph_cmd(f'fs subvolume create {v} {sv} --mode=777')
+
+        sv_path = self._get_sv_path(v, sv)
+        # adding more files for this test since in once few runs it fails due
+        # to race condition
+        self._do_subvolume_io(sv, number_of_files=200)
+
+        self.run_ceph_cmd(f'fs subvolume rm {v} {sv}')
+        # XXX actual test here: test that purging halts
+        self.config_set('mgr', self.CONF_OPT, True)
+        trashed_sv_path = self._get_trashed_sv_path(sv, sv_path)
+        NUM_OF_FILES = self._get_num_of_files_in_trashed_sv(trashed_sv_path)
+        time.sleep(2)
+        self._assert_trashed_sv_has_num_of_files(trashed_sv_path,
+                                                 NUM_OF_FILES)
+
+    def test_on_resuming_partly_purged_subvol_purges_fully(self):
+        '''
+        Test that when MGR config option mgr/volumes/pause_purging is
+        changed to false, the async purging of a subvolume will resume and
+        also finish, causing trash to be empty.
+        '''
+        v = self.volname
+        sv = 'sv1'
+
+        self.run_ceph_cmd(f'fs subvolume create {v} {sv} --mode=777')
+        self._do_subvolume_io(sv, number_of_files=100)
+
+        self.run_ceph_cmd(f'fs subvolume rm {v} {sv}')
+        self.config_set('mgr', self.CONF_OPT, True)
+        time.sleep(2)
+
+        # XXX actual test here: test that purging is resumed and finished
+        self.config_set('mgr', self.CONF_OPT, False)
+        self._wait_for_trash_empty()
+
+
+class TestPauseCloning(TestVolumesHelper):
+    '''
+    Tests related to config "mgr/volumes/pause_cloning".
+    '''
+
+    CLIENTS_REQUIRED = 1
+    MDSS_REQUIRED = 1
+
+    CONF_OPT = 'mgr/volumes/pause_cloning'
+
+    def setUp(self):
+        super().setUp()
+
+        self.NUM_OF_CLONER_THREADS = 4
+        self.config_set('mgr', 'mgr/volumes/max_concurrent_clones', self.NUM_OF_CLONER_THREADS)
+        self.config_set('mgr', 'mgr/volumes/snapshot_clone_no_wait', 'false')
+
+    def tearDown(self):
+        # every test will change value of this config option as per its need.
+        # assure that this config option's default value is re-stored during
+        # tearDown() so that there's zero chance that it interferes with next
+        # test.
+        self.config_set('mgr', self.CONF_OPT, False)
+
+        # ensure purge threads have no jobs left from previous test so that
+        # next test doesn't have to face unnecessary complications.
+        self._wait_for_trash_empty()
+
+        super().tearDown()
+
+    def test_pausing_prevents_news_clones_from_starting(self):
+        v = self.volname
+        sv = 'sv1'
+        ss = 'ss1'
+        c = 'ss1c1'
+
+        self.run_ceph_cmd(f'fs subvolume create {v} {sv} --mode=777')
+        self._do_subvolume_io(sv, None, None, 1, 10)
+        sv_path = self.get_ceph_cmd_stdout(f'fs subvolume getpath {v} '
+                                           f'{sv}')[1:].strip()
+
+        self.run_ceph_cmd(f'fs subvolume snapshot create {v} {sv} {ss}')
+        self.run_ceph_cmd(f'config set mgr {self.CONF_OPT} true')
+        self.run_ceph_cmd(f'fs subvolume snapshot clone {v} {sv} {ss} {c}')
+        time.sleep(10)
+
+        # n = num of files, value returned by "wc -l"
+        n = self.mount_a.get_shell_stdout(f'ls {sv_path}/{sv}/ | wc -l')
+        # num of files should be 0, cloning should've not begun
+        self.assertEqual(int(n), 0)
+
+    def test_pausing_halts_ongoing_cloning(self):
+        v = self.volname
+        sv = 'sv1'
+        ss = 'ss1'
+        c = 'ss1c1'
+
+        NUM_OF_FILES = 3
+        self.run_ceph_cmd(f'fs subvolume create {v} {sv} --mode=777')
+        self._do_subvolume_io(sv, None, None, NUM_OF_FILES, 1024)
+        sv_path = self.get_ceph_cmd_stdout(f'fs subvolume getpath {v} '
+                                           f'{sv}')[1:].strip()
+
+        self.run_ceph_cmd(f'fs subvolume snapshot create {v} {sv} {ss}')
+        self.run_ceph_cmd(f'fs subvolume snapshot clone {v} {sv} {ss} {c}')
+        # let few cloning begin...
+        time.sleep(2)
+        # ...and now let's pause cloning
+        self.run_ceph_cmd(f'config set mgr {self.CONF_OPT} true')
+
+        path = os.path.dirname(os.path.dirname(sv_path))
+        uuid = self.mount_a.get_shell_stdout(f'ls {path}/{c}').strip()
+        # n = num of files, value returned by "wc -l"
+        n = self.mount_a.get_shell_stdout(f'ls {path}/{c}/{uuid} | wc -l')
+        # num of files should be less or equal number of cloner threads
+        self.assertLessEqual(int(n), self.NUM_OF_CLONER_THREADS)
+
+    def test_resuming_begins_pending_cloning(self):
+        v = self.volname
+        sv = 'sv1'
+        ss = 'ss1'
+        c = 'ss1c1'
+
+        NUM_OF_FILES = 3
+        self.run_ceph_cmd(f'fs subvolume create {v} {sv} --mode=777')
+        self._do_subvolume_io(sv, None, None, NUM_OF_FILES, 1024)
+        sv_path = self.get_ceph_cmd_stdout(f'fs subvolume getpath {v} '
+                                           f'{sv}')[1:].strip()
+
+        self.run_ceph_cmd(f'fs subvolume snapshot create {v} {sv} {ss}')
+        self.run_ceph_cmd(f'config set mgr {self.CONF_OPT} true')
+        self.run_ceph_cmd(f'fs subvolume snapshot clone {v} {sv} {ss} {c}')
+        time.sleep(2)
+
+        # n = num of files, value returned by "wc -l"
+        n = self.mount_a.get_shell_stdout(f'ls {sv_path}/{sv}/ | wc -l')
+        # num of files should be 0, cloning should've not begun
+        self.assertEqual(int(n), 0)
+
+        self.run_ceph_cmd(f'config set mgr {self.CONF_OPT} false')
+        # test that cloning begun and reached completion
+        with safe_while(tries=3, sleep=10) as proceed:
+            while proceed():
+                n = self.mount_a.get_shell_stdout(f'ls {sv_path} | wc -l')
+                if int(n) == NUM_OF_FILES:
+                    break
+
+    def test_resuming_causes_partly_cloned_subvol_to_clone_fully(self):
+        v = self.volname
+        sv = 'sv1'
+        ss = 'ss1'
+        c = 'ss1c1'
+
+        NUM_OF_FILES = 3
+        self.run_ceph_cmd(f'fs subvolume create {v} {sv} --mode=777')
+        self._do_subvolume_io(sv, None, None, NUM_OF_FILES, 1024)
+        sv_path = self.get_ceph_cmd_stdout(f'fs subvolume getpath {v} '
+                                           f'{sv}')[1:].strip()
+
+        self.run_ceph_cmd(f'fs subvolume snapshot create {v} {sv} {ss}')
+        self.run_ceph_cmd(f'fs subvolume snapshot clone {v} {sv} {ss} {c}')
+        time.sleep(2)
+        self.run_ceph_cmd(f'config set mgr {self.CONF_OPT} true')
+        time.sleep(2)
+
+        self.run_ceph_cmd(f'config set mgr {self.CONF_OPT} false')
+        # test that cloning was resumed and reached completion
+        with safe_while(tries=3, sleep=10) as proceed:
+            while proceed():
+                n = self.mount_a.get_shell_stdout(f'ls {sv_path} | wc -l')
+                if int(n) == NUM_OF_FILES:
+                    break
+
+
 class TestSubvolumeGroupSnapshots(TestVolumesHelper):
     """Tests for FS subvolume group snapshot operations."""
     @unittest.skip("skipping subvolumegroup snapshot tests")
@@ -5864,6 +6504,224 @@ class TestSubvolumeSnapshots(TestVolumesHelper):
         self.mount_a.run_shell(['sudo', 'rm', '-f', tmp_meta_path], omit_sudo=False)
 
 
+class TestSubvolumeSnapshotGetpath(TestVolumesHelper):
+
+    def get_subvol_uuid(self, subvol_name, group_name=None):
+        '''
+        Return the UUID directory component obtained from the path of
+        subvolume.
+        '''
+        if group_name:
+            cmd = (f'fs subvolume getpath {self.volname} {subvol_name} '
+                   f'{group_name}')
+        else:
+            cmd = f'fs subvolume getpath {self.volname} {subvol_name}'
+
+        subvol_path = self.get_ceph_cmd_stdout(cmd).strip()
+
+        subvol_uuid = os.path.basename(subvol_path)
+        return subvol_uuid
+
+    def construct_snap_path_for_v2(self, subvol_name, snap_name, uuid,
+                                   group_name='_nogroup'):
+        return os.path.join('/volumes', group_name, subvol_name, '.snap',
+                            snap_name, uuid)
+
+    def construct_snap_path_for_v1(self, subvol_name, snap_name, uuid,
+                                   group_name='_nogroup'):
+        return os.path.join('/volumes', group_name, subvol_name, uuid,
+                            '.snap', snap_name)
+
+    def construct_snap_path_for_legacy(self, subvol_name, snap_name,
+                                       group_name='_nogroup'):
+        return os.path.join('/volumes', group_name, subvol_name, '.snap',
+                            snap_name)
+
+    def test_snapshot_getpath(self):
+        '''
+        Test that "ceph fs subvolume snapshot getpath" command returns path to
+        the specified snapshot in the specified subvolume.
+        '''
+        subvol_name = self._gen_subvol_name()
+        snap_name = self._gen_subvol_snap_name()
+
+        self.run_ceph_cmd(f'fs subvolume create {self.volname} {subvol_name}')
+        sv_uuid = self.get_subvol_uuid(subvol_name)
+        self.run_ceph_cmd(f'fs subvolume snapshot create {self.volname} '
+                          f'{subvol_name} {snap_name}')
+
+        snap_path = self.get_ceph_cmd_stdout(f'fs subvolume snapshot getpath '
+                                             f'{self.volname} {subvol_name} '
+                                             f'{snap_name}').strip()
+        exp_snap_path = self.construct_snap_path_for_v2(subvol_name, snap_name,
+                                                        sv_uuid)
+        self.assertEqual(snap_path, exp_snap_path)
+
+    def test_snapshot_getpath_in_group(self):
+        '''
+        Test that "ceph fs subvolume snapshot getpath" command returns path to
+        the specified snapshot in the specified subvolume in the specified
+        group.
+        '''
+        subvol_name = self._gen_subvol_name()
+        group_name = self._gen_subvol_grp_name()
+        snap_name = self._gen_subvol_snap_name()
+
+        self.run_ceph_cmd(f'fs subvolumegroup create {self.volname} {group_name}')
+        self.run_ceph_cmd(f'fs subvolume create {self.volname} {subvol_name} '
+                          f'{group_name}')
+        sv_uuid = self.get_subvol_uuid(subvol_name, group_name)
+        self.run_ceph_cmd(f'fs subvolume snapshot create {self.volname} '
+                          f'{subvol_name} {snap_name} {group_name}')
+
+        snap_path = self.get_ceph_cmd_stdout(f'fs subvolume snapshot getpath '
+                                             f'{self.volname} {subvol_name} '
+                                             f'{snap_name} {group_name}')\
+                                             .strip()
+        exp_snap_path = self.construct_snap_path_for_v2(subvol_name, snap_name,
+                                                        sv_uuid, group_name)
+        self.assertEqual(snap_path, exp_snap_path)
+
+    def test_snapshot_getpath_on_retained_subvol(self):
+        '''
+        Test that "ceph fs subvolume snapshot getpath" command returns path to
+        the specified snapshot in the specified subvolume that was deleted but
+        snapshots on which is retained.
+        '''
+        subvol_name = self._gen_subvol_name()
+        snap_name = self._gen_subvol_snap_name()
+
+        self.run_ceph_cmd(f'fs subvolume create {self.volname} {subvol_name}')
+        sv_uuid = self.get_subvol_uuid(subvol_name)
+        self.run_ceph_cmd(f'fs subvolume snapshot create {self.volname} '
+                          f'{subvol_name} {snap_name}')
+        self.run_ceph_cmd(f'fs subvolume rm {self.volname} {subvol_name} '
+                           '--retain-snapshots')
+
+        snap_path = self.get_ceph_cmd_stdout(f'fs subvolume snapshot getpath '
+                                             f'{self.volname} {subvol_name} '
+                                             f'{snap_name}').strip()
+        exp_snap_path = self.construct_snap_path_for_v2(subvol_name, snap_name,
+                                                        sv_uuid)
+        self.assertEqual(snap_path, exp_snap_path)
+
+    def test_snapshot_getpath_on_retained_subvol_in_group(self):
+        '''
+        Test that "ceph fs subvolume snapshot getpath" command returns path to
+        the specified snapshot in the specified subvolume that was deleted but
+        snapshots on which is retained. And the deleted subvolume is located on
+        a non-default group.
+        '''
+        subvol_name = self._gen_subvol_name()
+        group_name = self._gen_subvol_grp_name()
+        snap_name = self._gen_subvol_snap_name()
+
+        self.run_ceph_cmd(f'fs subvolumegroup create {self.volname} {group_name}')
+        self.run_ceph_cmd(f'fs subvolume create {self.volname} {subvol_name} '
+                          f'{group_name}')
+        sv_uuid = self.get_subvol_uuid(subvol_name, group_name)
+        self.run_ceph_cmd(f'fs subvolume snapshot create {self.volname} '
+                          f'{subvol_name} {snap_name} {group_name}')
+        self.run_ceph_cmd(f'fs subvolume rm {self.volname} {subvol_name} '
+                          f'{group_name} --retain-snapshots')
+
+        snap_path = self.get_ceph_cmd_stdout(f'fs subvolume snapshot getpath '
+                                             f'{self.volname} {subvol_name} '
+                                             f'{snap_name} {group_name}')\
+                                             .strip()
+        exp_snap_path = self.construct_snap_path_for_v2(subvol_name, snap_name,
+                                                        sv_uuid, group_name)
+        self.assertEqual(snap_path, exp_snap_path)
+
+    def test_snapshot_getpath_for_v1(self):
+        subvol_name = self._gen_subvol_name()
+        snap_name = self._gen_subvol_snap_name()
+
+        self._create_v1_subvolume(subvol_name)
+        sv_uuid = self.get_subvol_uuid(subvol_name)
+        self.run_ceph_cmd(f'fs subvolume snapshot create {self.volname} '
+                          f'{subvol_name} {snap_name}')
+
+        snap_path = self.get_ceph_cmd_stdout(
+            f'fs subvolume snapshot getpath {self.volname} {subvol_name} '
+            f'{snap_name}').strip()
+        exp_snap_path = self.construct_snap_path_for_v1(subvol_name, snap_name,
+                                                        sv_uuid)
+        self.assertEqual(snap_path, exp_snap_path)
+
+    def test_snapshot_getpath_in_group_for_v1(self):
+        subvol_name = self._gen_subvol_name()
+        group_name = self._gen_subvol_grp_name()
+        snap_name = self._gen_subvol_snap_name()
+
+        self.run_ceph_cmd(f'fs subvolumegroup create {self.volname} '
+                          f'{group_name}')
+        self._create_v1_subvolume(subvol_name, group_name)
+        sv_uuid = self.get_subvol_uuid(subvol_name, group_name)
+        self.run_ceph_cmd(f'fs subvolume snapshot create {self.volname} '
+                          f'{subvol_name} {snap_name} {group_name}')
+
+        snap_path = self.get_ceph_cmd_stdout(
+            f'fs subvolume snapshot getpath {self.volname} {subvol_name} '
+            f'{snap_name} {group_name}').strip()
+        exp_snap_path = self.construct_snap_path_for_v1(subvol_name, snap_name,
+                                                        sv_uuid, group_name)
+        self.assertEqual(snap_path, exp_snap_path)
+
+    def test_snapshot_getpath_for_upgraded_legacy(self):
+        subvol_name = self._gen_subvol_name()
+        snap_name = self._gen_subvol_snap_name()
+
+        sv_path = os.path.join('.', 'volumes', '_nogroup', subvol_name)
+        self.mount_a.run_shell(f'sudo mkdir -p {sv_path}', omit_sudo=False)
+
+        sv_getpath = self.get_ceph_cmd_stdout(
+            f'fs subvolume getpath {self.volname} {subvol_name}').strip()
+        self.assertNotEqual(sv_getpath, None)
+        # remove '/' at the beginning
+        self.assertEqual(sv_path[1:], sv_getpath)
+        self._assert_meta_location_and_version(self.volname, subvol_name,
+                                               version=1, legacy=True)
+
+        self.run_ceph_cmd(f'fs subvolume snapshot create {self.volname} '
+                          f'{subvol_name} {snap_name}')
+
+        snap_path = self.get_ceph_cmd_stdout(
+            f'fs subvolume snapshot getpath {self.volname} {subvol_name} '
+            f'{snap_name}').strip()
+        exp_snap_path = self.construct_snap_path_for_legacy(subvol_name,
+                                                            snap_name)
+        self.assertEqual(snap_path, exp_snap_path)
+
+    def test_snapshot_getpath_in_group_for_upgraded_legacy(self):
+        subvol_name = self._gen_subvol_name()
+        group_name = self._gen_subvol_grp_name()
+        snap_name = self._gen_subvol_snap_name()
+
+        sv_path = os.path.join('.', 'volumes', group_name, subvol_name)
+        self.mount_a.run_shell(f'sudo mkdir -p {sv_path}', omit_sudo=False)
+
+        sv_getpath = self.get_ceph_cmd_stdout(
+            f'fs subvolume getpath {self.volname} {subvol_name} '
+            f'{group_name}').strip()
+        self.assertNotEqual(sv_getpath, None)
+        # remove '/' at the beginning
+        self.assertEqual(sv_path[1:], sv_getpath)
+        self._assert_meta_location_and_version(self.volname, subvol_name,
+                                               subvol_group=group_name,
+                                               version=1, legacy=True)
+
+        self.run_ceph_cmd(f'fs subvolume snapshot create {self.volname} '
+                          f'{subvol_name} {snap_name} {group_name}')
+
+        snap_path = self.get_ceph_cmd_stdout(
+            f'fs subvolume snapshot getpath {self.volname} {subvol_name} '
+            f'{snap_name} {group_name}').strip()
+        exp_snap_path = self.construct_snap_path_for_legacy(subvol_name, snap_name,
+                                                            group_name)
+        self.assertEqual(snap_path, exp_snap_path)
+
+
 class TestSubvolumeSnapshotClones(TestVolumesHelper):
     """ Tests for FS subvolume snapshot clone operations."""
     def test_clone_subvolume_info(self):
@@ -5999,7 +6857,7 @@ class TestSubvolumeSnapshotClones(TestVolumesHelper):
         self._fs_cmd("subvolume", "snapshot", "create", self.volname, subvolume, snapshot)
 
         # insert delay at the beginning of snapshot clone
-        self.config_set('mgr', 'mgr/volumes/snapshot_clone_delay', 5)
+        self.config_set('mgr', 'mgr/volumes/snapshot_clone_delay', 15)
 
         # disable "capped" clones
         self.config_set('mgr', 'mgr/volumes/snapshot_clone_no_wait', False)
@@ -8352,6 +9210,51 @@ class TestMisc(TestVolumesHelper):
 
         # remove group
         self._fs_cmd("subvolumegroup", "rm", self.volname, group)
+
+    def test_dangling_symlink(self):
+        """
+        test_dangling_symlink
+        Tests for the presence of any dangling symlink, if yes,
+        will remove it.
+        """
+        subvolume = self._gen_subvol_name()
+        snapshot = self._gen_subvol_snap_name()
+        clone = self._gen_subvol_clone_name()
+
+        self._fs_cmd("subvolume", "create", self.volname, subvolume)
+
+        self._fs_cmd("subvolume", "snapshot", "create", self.volname, subvolume, snapshot)
+
+        self.config_set('mgr', 'mgr/volumes/snapshot_clone_delay', 60)
+
+        self.config_set('mgr', 'mgr/volumes/snapshot_clone_no_wait', False)
+
+        self._fs_cmd("subvolume", "snapshot", "clone", self.volname, subvolume, snapshot, clone)
+
+        result = json.loads(self._fs_cmd("subvolume", "snapshot", "info", self.volname, subvolume, snapshot))
+
+        # verify snapshot info
+        self.assertEqual(result['has_pending_clones'], "yes")
+
+        clone_path = f'./volumes/_nogroup/{clone}'
+        self.mount_a.run_shell(['sudo', 'rm', '-rf', clone_path], omit_sudo=False)
+
+        with safe_while(sleep=5, tries=6) as proceed:
+            while proceed():
+                try:
+                    result = json.loads(self._fs_cmd("subvolume", "snapshot", "info", self.volname, subvolume, snapshot))
+                    # verify snapshot info
+                    self.assertEqual(result['has_pending_clones'], "no")
+                    break
+                except AssertionError as e:
+                    log.debug(f'{e}, retrying')
+
+        self._fs_cmd("subvolume", "snapshot", "rm", self.volname, subvolume, snapshot)
+
+        self._fs_cmd("subvolume", "rm", self.volname, subvolume)
+
+        self._wait_for_trash_empty()
+
 
 class TestPerModuleFinsherThread(TestVolumesHelper):
     """

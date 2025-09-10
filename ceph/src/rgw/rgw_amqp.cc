@@ -2,10 +2,17 @@
 // vim: ts=8 sw=2 smarttab ft=cpp
 
 #include "rgw_amqp.h"
+#if __has_include(<rabbitmq-c/amqp.h>)
+#include <rabbitmq-c/amqp.h>
+#include <rabbitmq-c/ssl_socket.h>
+#include <rabbitmq-c/tcp_socket.h>
+#include <rabbitmq-c/framing.h>
+#else
 #include <amqp.h>
 #include <amqp_ssl_socket.h>
 #include <amqp_tcp_socket.h>
 #include <amqp_framing.h>
+#endif // __has_include(<rabbitmq-c/amqp.h>)
 #include "include/ceph_assert.h"
 #include <sstream>
 #include <cstring>
@@ -15,8 +22,10 @@
 #include <thread>
 #include <atomic>
 #include <mutex>
+#include <shared_mutex> // for std::shared_lock
 #include <boost/lockfree/queue.hpp>
 #include <boost/functional/hash.hpp>
+#include "common/Clock.h" // for ceph_clock_now()
 #include "common/dout.h"
 #include <openssl/ssl.h>
 
@@ -513,10 +522,10 @@ bool new_state(connection_t* conn, const connection_id_t& conn_id) {
 
 /// struct used for holding messages in the message queue
 struct message_wrapper_t {
-  connection_id_t conn_id;
-  std::string topic;
-  std::string message;
-  reply_callback_t cb;
+  const connection_id_t conn_id;
+  const std::string topic;
+  const std::string message;
+  const reply_callback_t cb;
 
   message_wrapper_t(const connection_id_t& _conn_id,
       const std::string& _topic,

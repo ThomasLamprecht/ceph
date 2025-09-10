@@ -159,7 +159,6 @@ The health check history may be retrieved and cleared by running the following c
    ceph healthcheck history ls [--format {plain|json|json-pretty}]
    ceph healthcheck history clear
 
-
 The ``ceph healthcheck ls`` command provides an overview of the health checks that the cluster has
 encountered since the last ``clear`` command was issued:
 

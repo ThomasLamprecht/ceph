@@ -1,17 +1,23 @@
 #!/usr/bin/python3
 #
-# Copyright (c) 2019-2023 Ruben Perez Hidalgo (rubenperez038 at gmail dot com)
+# Copyright (c) 2019-2024 Ruben Perez Hidalgo (rubenperez038 at gmail dot com)
 #
 # Distributed under the Boost Software License, Version 1.0. (See accompanying
 # file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
 #
 
 import os
-import re
+from pathlib import Path
 from os import path
 from typing import List, Tuple
 import glob
 from abc import abstractmethod, ABCMeta
+import sys
+
+THIS_FOLDER = path.abspath(path.dirname(path.realpath(__file__)))
+sys.path.append(path.join(THIS_FOLDER))
+
+import examples_qbk
 
 # Script to get file headers (copyright notices
 # and include guards) okay and up to date
@@ -24,33 +30,53 @@ BASE_FOLDERS = [
     'doc',
     'example',
     'include',
+    'src',
     'test',
     'tools',
+    'bench',
     '.github'
 ]
 BASE_FILES = [
     'CMakeLists.txt',
-    '.drone.star'
+    '.drone.star',
+    '.codecov.yml'
 ]
 HTML_GEN_PATH = path.join(REPO_BASE, 'doc', 'html')
 
 HEADER_TEMPLATE = '''{begin}
-{linesym} Copyright (c) 2019-2023 Ruben Perez Hidalgo (rubenperez038 at gmail dot com)
+{linesym} Copyright (c) 2019-2024 Ruben Perez Hidalgo (rubenperez038 at gmail dot com)
 {linesym}
 {linesym} Distributed under the Boost Software License, Version 1.0. (See accompanying
 {linesym} file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
 {end}'''
 
+SRC_HPP_TEMPLATE = '''
+// This file is meant to be included once, in a translation unit of
+// the program, with the macro BOOST_MYSQL_SEPARATE_COMPILATION defined.
+
+#include <boost/mysql/detail/config.hpp>
+
+#ifndef BOOST_MYSQL_SEPARATE_COMPILATION
+#error You need to define BOOST_MYSQL_SEPARATE_COMPILATION in all translation units that use the compiled version of Boost.MySQL, \\
+    as well as the one where this file is included.
+#endif
+
+{includes}
+
+#endif'''
+
 MYSQL_ERROR_HEADER = path.join(REPO_BASE, 'private', 'mysqld_error.h')
 MARIADB_ERROR_HEADER = path.join(REPO_BASE, 'private', 'mariadb_error.h')
-MYSQL_INCLUDE = re.compile('#include <boost/mysql/(.*)>')
 
-def find_first_blank(lines):
-    return [i for i, line in enumerate(lines) if line == ''][0]
+def find_first_blank(lines: List[str]) -> int:
+    return next((i for i, line in enumerate(lines) if line.replace('\n', '') == ''), len(lines))
 
 def read_file(fpath):
     with open(fpath, 'rt') as f:
-        return f.readlines()
+        try:
+            return f.readlines()
+        except Exception as err:
+            raise SystemError(f'Error processing file {fpath}') from err
     
 def write_file(fpath, lines):
     with open(fpath, 'wt') as f:
@@ -58,9 +84,6 @@ def write_file(fpath, lines):
 
 def text_to_lines(text):
     return [line + '\n' for line in text.split('\n')]
-
-def normalize_includes(lines: List[str]):
-    return [re.sub(MYSQL_INCLUDE, '#include <boost/mysql/\\1>', line) for line in lines]
 
 def gen_header(linesym, opensym=None, closesym=None, shebang=None, include_guard=None):
     opensym = linesym if opensym is None else opensym
@@ -76,6 +99,8 @@ def gen_header(linesym, opensym=None, closesym=None, shebang=None, include_guard
     return text_to_lines(HEADER_TEMPLATE.format(begin=begin, end=end, linesym=linesym))
 
 class BaseProcessor(metaclass=ABCMeta):
+    skip = False
+
     @abstractmethod
     def process(self, lines: List[str], fpath: str) -> List[str]:
         return lines
@@ -88,8 +113,8 @@ class NormalProcessor(BaseProcessor):
         self.name = name
         
     def process(self, lines: List[str], _: str) -> List[str]:
-        first_blank = find_first_blank(line.replace('\n', '') for line in lines)
-        lines = self.header + normalize_includes(lines[first_blank:])
+        first_blank = find_first_blank(lines)
+        lines = self.header + lines[first_blank:]
         return lines
         
 class HppProcessor(BaseProcessor):
@@ -99,7 +124,7 @@ class HppProcessor(BaseProcessor):
         first_content = [i for i, line in enumerate(lines) if line.startswith('#define')][0] + 1
         iguard = self._gen_include_guard(fpath)
         header = gen_header('//', include_guard=iguard)
-        lines = header + normalize_includes(lines[first_content:])
+        lines = header + lines[first_content:]
         return lines
         
         
@@ -111,7 +136,42 @@ class HppProcessor(BaseProcessor):
         else:
             relpath = path.join('boost', 'mysql', path.relpath(fpath, REPO_BASE))
         return relpath.replace('/', '_').replace('.', '_').upper()
-        
+
+
+class SrcHppProcessor(HppProcessor):
+    name = 'src.hpp'
+
+    def process(self, _: List[str], fpath: str) -> List[str]:
+        base = Path(REPO_BASE)
+        includes = [
+            fname.relative_to(base.joinpath('include'))
+            for fname in sorted(base.joinpath('include', 'boost', 'mysql', 'impl').rglob('*.ipp'))
+        ]
+        return gen_header('//', include_guard=self._gen_include_guard(fpath)) + \
+            text_to_lines(
+                SRC_HPP_TEMPLATE.format(
+                    includes='\n'.join(f'#include <{inc}>' for inc in includes)
+                )
+            )
+
+
+class MysqlHppProcessor(HppProcessor):
+    name = 'mysql.hpp'
+
+    def process(self, _: List[str], fpath: str) -> List[str]:
+        base = Path(REPO_BASE)
+        exclusions = ('src.hpp', 'pfr.hpp')
+        includes = [
+            fname.relative_to(base.joinpath('include'))
+            for fname in sorted(base.joinpath('include', 'boost', 'mysql').glob('*.hpp'))
+            if fname.name not in exclusions
+        ]
+        return gen_header('//', include_guard=self._gen_include_guard(fpath)) + \
+            ['\n'] + \
+            [f'#include <{inc}>\n' for inc in includes] + \
+            ['\n', '#endif\n']
+
+
 class XmlProcessor(BaseProcessor):
     name = 'xml'
     header = gen_header('   ', '<!--', '-->')
@@ -130,6 +190,7 @@ class XmlProcessor(BaseProcessor):
         
 class IgnoreProcessor(BaseProcessor):
     name = 'ignore'
+    skip = True
     
     def process(self, lines: List[str], _: str) -> List[str]:
         return lines
@@ -143,7 +204,8 @@ bash_processor = NormalProcessor('bash', gen_header('#', shebang='#!/bin/bash'))
 bat_processor = NormalProcessor('bat', gen_header('@REM'))
 
 FILE_PROCESSORS : List[Tuple[str, BaseProcessor]] = [
-    ('docca-base-stage2-noescape.xsl', IgnoreProcessor()),
+    ('src.hpp', SrcHppProcessor()),
+    ('mysql.hpp', MysqlHppProcessor()),
     ('CMakeLists.txt', hash_processor),
     ('.cmake', hash_processor),
     ('.cmake.in', hash_processor),
@@ -169,20 +231,30 @@ FILE_PROCESSORS : List[Tuple[str, BaseProcessor]] = [
     ('valgrind_suppressions.txt', IgnoreProcessor()),
     ('.pem', IgnoreProcessor()),
     ('.md', IgnoreProcessor()),
+    ('.csv', IgnoreProcessor()),
+    ('.tar.gz', IgnoreProcessor()),
+    ('.json', IgnoreProcessor()),
+    ('.txt', IgnoreProcessor()),
+    ('.pyc', IgnoreProcessor()),
 ]
 
 def process_file(fpath: str):
-    for ext, processor in FILE_PROCESSORS:
-        if fpath.endswith(ext):
-            if VERBOSE:
-                print('Processing file {} with processor {}'.format(fpath, processor.name))
-            lines = read_file(fpath)
-            output_lines = processor.process(lines, fpath)
-            if output_lines != lines:
-                write_file(fpath, output_lines)
-            break
-    else:
-        raise ValueError('Could not find a suitable processor for file: ' + fpath)
+    try:
+        for ext, processor in FILE_PROCESSORS:
+            if fpath.endswith(ext):
+                if VERBOSE:
+                    print('Processing file {} with processor {}'.format(fpath, processor.name))
+                if not processor.skip:
+                    lines = read_file(fpath)
+                    output_lines = processor.process(lines, fpath)
+                    if output_lines != lines:
+                        write_file(fpath, output_lines)
+                break
+        else:
+            raise ValueError('Could not find a suitable processor for file: ' + fpath)
+    except Exception:
+        print(f'Found error processing {fpath}')
+        raise
     
 def process_all_files():
     for base_folder in BASE_FOLDERS:
@@ -218,6 +290,7 @@ def verify_test_consistency():
 def main():
     process_all_files()
     verify_test_consistency()
+    examples_qbk.main()
             
             
 if __name__ == '__main__':

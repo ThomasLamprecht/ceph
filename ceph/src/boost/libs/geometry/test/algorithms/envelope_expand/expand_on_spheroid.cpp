@@ -38,6 +38,7 @@
 #include <boost/geometry/io/wkt/wkt.hpp>
 
 #include <boost/geometry/util/condition.hpp>
+#include <boost/geometry/util/is_inverse_spheroidal_coordinates.hpp>
 
 #include <boost/geometry/views/detail/indexed_point_view.hpp>
 
@@ -983,13 +984,13 @@ void test_expand_box()
                   from_wkt<G>("BOX(90 -20,190 55)"),
                   90, -20, 190, 90);
 
-    // both boxes are the north pole 
+    // both boxes are the north pole
     tester::apply("b14",
                   from_wkt<B>("BOX(-90 90,80 90)"),
                   from_wkt<G>("BOX(90 90,190 90)"),
                   0, 90, 0, 90);
 
-    // both boxes are the south pole 
+    // both boxes are the south pole
     tester::apply("b15",
                   from_wkt<B>("BOX(-90 -90,80 -90)"),
                   from_wkt<G>("BOX(90 -90,190 -90)"),

@@ -441,6 +441,7 @@ enum {
 	CEPH_MDS_OP_QUIESCE_PATH = 0x01508,
 	CEPH_MDS_OP_QUIESCE_INODE = 0x01509,
 	CEPH_MDS_OP_LOCK_PATH = 0x0150a,
+	CEPH_MDS_OP_UNINLINE_DATA = 0x0150b
 };
 
 #define IS_CEPH_MDS_OP_NEWINODE(op) (op == CEPH_MDS_OP_CREATE     || \
@@ -1013,7 +1014,7 @@ extern const char *ceph_cap_op_name(int op);
 /* extra info for cap import/export */
 struct ceph_mds_cap_peer {
 	__le64 cap_id;
-	__le32 seq;
+	__le32 issue_seq;
 	__le32 mseq;
 	__le32 mds;
 	__u8   flags;
@@ -1066,7 +1067,7 @@ struct ceph_mds_cap_release {
 struct ceph_mds_cap_item {
 	__le64 ino;
 	__le64 cap_id;
-	__le32 migrate_seq, seq;
+	__le32 migrate_seq, issue_seq;
 } __attribute__ ((packed));
 
 #define CEPH_MDS_LEASE_REVOKE           1  /*    mds  -> client */

@@ -90,7 +90,7 @@ Avoid output parameters; use return values instead.  In/out parameters are trick
 
 If a function accepts a lambda or an `std::function`, make it the last argument, so that it can be easily provided inline:
 
-```c++ 
+```c++
 template <typename Func>
 void function_accepting_a_lambda(int a, int b, Func func);
 
@@ -127,7 +127,7 @@ Whitespace around operators should match their precedence: high precedence = no 
 
 ## Long lines
 
-If a line becomes excessively long (>120 characters?), or is just complicated, break it into two or more lines.  The second (and succeeding lines) are _continuation lines_, and have a double indent:
+If a line becomes excessively long (>160 characters?), or is just complicated, break it into two or more lines.  The second (and succeeding lines) are _continuation lines_, and have a double indent:
 
 ```c++
     if ((some_condition && some_other_condition)

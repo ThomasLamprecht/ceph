@@ -1,5 +1,5 @@
 #
-# Copyright (c) 2003-2023 Christopher M. Kohlhoff (chris at kohlhoff dot com)
+# Copyright (c) 2003-2024 Christopher M. Kohlhoff (chris at kohlhoff dot com)
 #
 # Distributed under the Boost Software License, Version 1.0. (See accompanying
 # file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -23,9 +23,9 @@ local USE_SELECT =
 
 project
   : requirements
-    <library>/boost/date_time//boost_date_time
-    <library>/boost/system//boost_system
+    <library>/boost/asio//boost_asio
     <library>/boost/chrono//boost_chrono
+    <library>/boost/context//boost_context
     <library>/boost/regex//boost_regex
     <define>BOOST_ALL_NO_LIB=1
     <threading>multi
@@ -48,6 +48,12 @@ project
   ;
 
 test-suite "asio" :
+  [ run any_completion_executor.cpp ]
+  [ run any_completion_executor.cpp : : : $(USE_SELECT) : any_completion_executor_select ]
+  [ run any_completion_handler.cpp ]
+  [ run any_completion_handler.cpp : : : $(USE_SELECT) : any_completion_handler_select ]
+  [ run any_io_executor.cpp ]
+  [ run any_io_executor.cpp : : : $(USE_SELECT) : any_io_executor_select ]
   [ run append.cpp ]
   [ run append.cpp : : : $(USE_SELECT) : append_select ]
   [ run as_tuple.cpp ]
@@ -112,18 +118,28 @@ test-suite "asio" :
   [ run buffered_write_stream.cpp : : : $(USE_SELECT) : buffered_write_stream_select ]
   [ run buffers_iterator.cpp ]
   [ run buffers_iterator.cpp : : : $(USE_SELECT) : buffers_iterator_select ]
+  [ run cancel_after.cpp ]
+  [ run cancel_after.cpp : : : $(USE_SELECT) : cancel_after_select ]
+  [ run cancel_at.cpp ]
+  [ run cancel_at.cpp : : : $(USE_SELECT) : cancel_at_select ]
   [ link cancellation_signal.cpp ]
   [ link cancellation_signal.cpp : $(USE_SELECT) : cancellation_signal_select ]
   [ link cancellation_state.cpp ]
   [ link cancellation_state.cpp : $(USE_SELECT) : cancellation_state_select ]
   [ link cancellation_type.cpp ]
   [ link cancellation_type.cpp : $(USE_SELECT) : cancellation_type_select ]
+  [ run co_composed.cpp ]
+  [ run co_composed.cpp : : : $(USE_SELECT) : co_composed_select ]
   [ link co_spawn.cpp ]
   [ link co_spawn.cpp : $(USE_SELECT) : co_spawn_select ]
   [ link completion_condition.cpp ]
   [ link completion_condition.cpp : $(USE_SELECT) : completion_condition_select ]
   [ run compose.cpp ]
   [ run compose.cpp : : : $(USE_SELECT) : compose_select ]
+  [ run composed.cpp ]
+  [ run composed.cpp : : : $(USE_SELECT) : composed_select ]
+  [ run config.cpp ]
+  [ run config.cpp : : : $(USE_SELECT) : config_select ]
   [ link connect.cpp ]
   [ link connect.cpp : $(USE_SELECT) : connect_select ]
   [ run connect_pipe.cpp ]
@@ -138,6 +154,8 @@ test-suite "asio" :
   [ run deferred.cpp : : : $(USE_SELECT) : deferred_select ]
   [ link detached.cpp ]
   [ link detached.cpp : $(USE_SELECT) : detached_select ]
+  [ run disposition.cpp ]
+  [ run disposition.cpp : : : $(USE_SELECT) : disposition_select ]
   [ run error.cpp ]
   [ run error.cpp : : : $(USE_SELECT) : error_select ]
   [ link file_base.cpp ]
@@ -154,6 +172,8 @@ test-suite "asio" :
   [ link generic/stream_protocol.cpp : $(USE_SELECT) : generic_stream_protocol_select ]
   [ link high_resolution_timer.cpp ]
   [ link high_resolution_timer.cpp : $(USE_SELECT) : high_resolution_timer_select ]
+  [ link immediate.cpp ]
+  [ link immediate.cpp : $(USE_SELECT) : immediate_select ]
   [ run io_context.cpp ]
   [ run io_context.cpp : : : $(USE_SELECT) : io_context_select ]
   [ run io_context_strand.cpp ]
@@ -238,6 +258,8 @@ test-suite "asio" :
   [ link signal_set_base.cpp : $(USE_SELECT) : signal_set_base_select ]
   [ run socket_base.cpp ]
   [ run socket_base.cpp : : : $(USE_SELECT) : socket_base_select ]
+  [ run spawn.cpp ]
+  [ run spawn.cpp : : : $(USE_SELECT) : spawn_select ]
   [ run static_thread_pool.cpp ]
   [ run static_thread_pool.cpp : : : $(USE_SELECT) : static_thread_pool_select ]
   [ link steady_timer.cpp ]

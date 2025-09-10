@@ -2,6 +2,7 @@
 // vim: ts=8 sw=2 smarttab ft=cpp
 
 #include "rgw_pubsub_push.h"
+#include <shared_mutex> // for std::shared_lock
 #include <string>
 #include <sstream>
 #include <algorithm>
@@ -11,6 +12,7 @@
 #include "common/async/completion.h"
 #include "common/async/yield_waiter.h"
 #include "common/async/waiter.h"
+#include "rgw_asio_thread.h"
 #include "rgw_common.h"
 #include "rgw_data_sync.h"
 #include "rgw_pubsub.h"
@@ -26,7 +28,7 @@
 #include <functional>
 #include "rgw_perf_counters.h"
 
-#define dout_subsys ceph_subsys_rgw
+#define dout_subsys ceph_subsys_rgw_notification
 
 using namespace rgw;
 
@@ -90,7 +92,8 @@ public:
     }
   }
 
-  int send(const rgw_pubsub_s3_event& event, optional_yield y) override {
+  int send(const DoutPrefixProvider* dpp, const rgw_pubsub_s3_event& event,
+           optional_yield y) override {
     std::shared_lock lock(s_http_manager_mutex);
     if (!s_http_manager) {
       ldout(cct, 1) << "ERROR: send failed. http endpoint manager not running" << dendl;
@@ -98,6 +101,8 @@ public:
     }
     bufferlist read_bl;
     RGWPostHTTPData request(cct, "POST", endpoint, &read_bl, verify_ssl);
+    //default to 3 seconds for wrong url hits - if wrong endpoint configured
+    request.set_req_connect_timeout(3);
     const auto post_data = json_format_pubsub_event(event);
     if (cloudevents) {
       // following: https://github.com/cloudevents/spec/blob/v1.0.1/http-protocol-binding.md
@@ -116,7 +121,7 @@ public:
     if (perfcounter) perfcounter->inc(l_rgw_pubsub_push_pending);
     auto rc = s_http_manager->add_request(&request);
     if (rc == 0) {
-      rc = request.wait(y);
+      rc = request.wait(dpp, y);
     }
     if (perfcounter) perfcounter->dec(l_rgw_pubsub_push_pending);
     // TODO: use read_bl to process return code and handle according to ack level
@@ -200,7 +205,7 @@ public:
     }
   }
 
-  int send(const rgw_pubsub_s3_event& event, optional_yield y) override {
+  int send(const DoutPrefixProvider* dpp, const rgw_pubsub_s3_event& event, optional_yield y) override {
     if (ack_level == ack_level_t::None) {
       return amqp::publish(conn_id, topic, json_format_pubsub_event(event));
     } else {
@@ -285,7 +290,8 @@ public:
    }
  }
 
-  int send(const rgw_pubsub_s3_event& event, optional_yield y) override {
+  int send(const DoutPrefixProvider* dpp, const rgw_pubsub_s3_event& event,
+           optional_yield y) override {
     if (ack_level == ack_level_t::None) {
       return kafka::publish(conn_id, topic, json_format_pubsub_event(event));
     } else {
@@ -431,4 +437,3 @@ void RGWPubSubEndpoint::shutdown_all() {
 #endif
   shutdown_http_manager();
 }
-

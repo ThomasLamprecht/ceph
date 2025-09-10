@@ -367,6 +367,9 @@ Commands
 :command:`group snap list` *group-spec*
   List snapshots of a group.
 
+:command:`group snap info` *group-snap-spec*
+  Get information about a snapshot of a group.
+
 :command:`group snap rm` *group-snap-spec*
   Remove a snapshot from a group.
 
@@ -529,7 +532,7 @@ Commands
   disabled on all images (within the pool or namespace) for which mirroring
   was enabled, whether by default or explicitly.
 
-:command:`mirror pool enable` [*pool-name*] *mode*
+:command:`mirror pool enable` *pool-name* *mode* [--remote-namespace *remote-namespace-name*]
   Enable RBD mirroring within a pool or namespace.
   The mirroring mode can either be ``pool`` or ``image``.
   If configured in ``pool`` mode, all images in the pool or namespace
@@ -537,11 +540,14 @@ Commands
   If configured in ``image`` mode, mirroring needs to be
   explicitly enabled (by ``mirror image enable`` command)
   on each image.
+  A namespace can be mirrored to a different namespace on the remote
+  pool using the ``--remote-namespace`` option.
 
 :command:`mirror pool info` [*pool-name*]
   Show information about the pool or namespace mirroring configuration.
-  For a pool, it includes mirroring mode, peer UUID, remote cluster name,
-  and remote client name. For a namespace, it includes only mirroring mode.
+  For both pools and namespaces, it includes the mirroring mode, mirror UUID
+  and remote namespace. For pools, it additionally includes the site name,
+  peer UUID, remote cluster name, and remote client name.
 
 :command:`mirror pool peer add` [*pool-name*] *remote-cluster-spec*
   Add a mirroring peer to a pool.
@@ -552,7 +558,7 @@ Commands
   This requires mirroring to be enabled on the pool.
 
 :command:`mirror pool peer remove` [*pool-name*] *uuid*
-  Remove a mirroring peer from a pool. The peer uuid is available
+  Remove a mirroring peer from a pool. The peer UUID is available
   from ``mirror pool info`` command.
 
 :command:`mirror pool peer set` [*pool-name*] *uuid* *key* *value*
@@ -570,7 +576,11 @@ Commands
   details for every mirror-enabled image in the pool or namespace.
 
 :command:`mirror snapshot schedule add` [-p | --pool *pool*] [--namespace *namespace*] [--image *image*] *interval* [*start-time*]
-  Add mirror snapshot schedule.
+  Add mirror snapshot schedule. The ``interval`` can be specified in
+  days, hours, or minutes using the d, h, m suffix respectively.
+  The ``start-time`` is a time string in ISO 8601 format. Not providing the
+  ``--pool``, ``--namespace`` and ``--image`` options creates a global
+  schedule which applies to all mirror-enabled images in the cluster.
 
 :command:`mirror snapshot schedule list` [-R | --recursive] [--format *format*] [--pretty-format] [-p | --pool *pool*] [--namespace *namespace*] [--image *image*]
   List mirror snapshot schedule.
@@ -885,7 +895,7 @@ Per mapping (block device) `rbd device map` options:
   backend that the data is incompressible, disabling compression in aggressive
   mode (since 5.8).
 
-* ms_mode=legacy - Use msgr1 on-the-wire protocol (since 5.11, default).
+* ms_mode=legacy - Use msgr1 on-the-wire protocol (since 5.11).
 
 * ms_mode=crc - Use msgr2.1 on-the-wire protocol, select 'crc' mode, also
   referred to as plain mode (since 5.11).  If the daemon denies 'crc' mode,
@@ -897,8 +907,8 @@ Per mapping (block device) `rbd device map` options:
   fail the connection.
 
 * ms_mode=prefer-crc - Use msgr2.1 on-the-wire protocol, select 'crc'
-  mode (since 5.11).  If the daemon denies 'crc' mode in favor of 'secure'
-  mode, agree to 'secure' mode.
+  mode (since 5.11, default).  If the daemon denies 'crc' mode in favor of
+  'secure' mode, agree to 'secure' mode.
 
 * ms_mode=prefer-secure - Use msgr2.1 on-the-wire protocol, select 'secure'
   mode (since 5.11).  If the daemon denies 'secure' mode in favor of 'crc'
@@ -1025,6 +1035,9 @@ To restore an image from trash and rename it::
 
        rbd trash restore mypool/myimage-id --image mynewimage
 
+To create a mirror snapshot schedule for an image::
+
+       rbd mirror snapshot schedule add --pool mypool --image myimage 12h 14:00:00-05:00
 
 Availability
 ============

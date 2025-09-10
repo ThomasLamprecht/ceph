@@ -50,7 +50,7 @@ describe('Configuration page', () => {
 
     it('should verify modified filter is applied properly', () => {
       configuration.clearFilter();
-      configuration.getTableCount('total').as('configFound');
+      configuration.getTableCount('found').as('configFound');
       configuration.filterTable('Modified', 'no');
       configuration.getTableCount('found').as('unmodifiedConfigs');
 

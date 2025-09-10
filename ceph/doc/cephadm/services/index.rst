@@ -20,6 +20,8 @@ for details on individual services:
     snmp-gateway
     tracing
     smb
+    mgmt-gateway
+    oauth2-proxy
 
 Service Status
 ==============

@@ -21,6 +21,9 @@ import urllib.request
 import yaml
 import platform
 import shlex
+import psutil
+import mmap
+import datetime
 
 dry_run_mode = False
 def perftune_print(log_msg, *args, **kwargs):
@@ -347,6 +350,8 @@ class PerfTunerBase(metaclass=abc.ABCMeta):
             self.irqs_cpu_mask = auto_detect_irq_mask(self.cpu_mask, self.cores_per_irq_core)
 
         self.__is_aws_i3_nonmetal_instance = None
+        self.__metadata_token_value = None
+        self.__metadata_token_time = None
 
 #### Public methods ##########################
     class CPUMaskIsZeroException(Exception):
@@ -547,13 +552,49 @@ class PerfTunerBase(metaclass=abc.ABCMeta):
         pass
 
 #### Private methods ############################
+    @property
+    def __ec2_metadata_base_url(self):
+        return "http://169.254.169.254/latest/"
+
+    @property
+    def __metadata_token(self):
+        """
+        Refresh IMDSv2 session token if it necessary, and return current token
+        :return: current session token
+        """
+        token_ttl = 21600
+        update_token = False
+        if not self.__metadata_token_value:
+            update_token = True
+        else:
+            time_diff = datetime.datetime.now() - self.__metadata_token_time
+            time_diff_sec = int(time_diff.total_seconds())
+            if time_diff_sec >= token_ttl - 120:
+                update_token = True
+        if update_token:
+            self.__metadata_token_time = datetime.datetime.now()
+            req = urllib.request.Request(self.__ec2_metadata_base_url + "api/token", headers={"X-aws-ec2-metadata-token-ttl-seconds": token_ttl}, method="PUT")
+            with urllib.request.urlopen(req, timeout=0.1) as res:
+                self.__metadata_token_value = res.read().decode()
+        return self.__metadata_token_value
+
+    def __get_instance_metadata(self, path):
+        """
+        Get a parameter from EC2 Metadata server
+        :param path: metadata path to access for
+        :return: received metadata as a string
+        """
+        req = urllib.request.Request(self.__ec2_metadata_base_url + 'meta-data/' + path, headers={"X-aws-ec2-metadata-token": self.__metadata_token})
+        with urllib.request.urlopen(req, timeout=0.1) as res:
+            return res.read().decode()
+
     def __check_host_type(self):
         """
         Check if we are running on the AWS i3 nonmetal instance.
         If yes, set self.__is_aws_i3_nonmetal_instance to True, and to False otherwise.
         """
         try:
-            aws_instance_type = urllib.request.urlopen("http://169.254.169.254/latest/meta-data/instance-type", timeout=0.1).read().decode()
+            aws_instance_type = self.__get_instance_metadata('instance-type')
             if re.match(r'^i3\.((?!metal)\w)+$', aws_instance_type):
                 self.__is_aws_i3_nonmetal_instance = True
             else:
@@ -605,6 +646,17 @@ class NetPerfTuner(PerfTunerBase):
         # Increase the maximum number of remembered connection requests, which are still
         # did not receive an acknowledgment from connecting client.
         fwriteln_and_log('/proc/sys/net/ipv4/tcp_max_syn_backlog', '4096')
+
+        self.tune_tcp_mem()
+
+    def tune_tcp_mem(self):
+        page_size = mmap.PAGESIZE
+        total_mem = psutil.virtual_memory().total
+        # We only tune for physical memory since tcp_mem is virtualized
+        def to_pages(bytes):
+            return math.ceil(bytes / page_size)
+        max = total_mem * self.args.tcp_mem_fraction
+        fwriteln_and_log('/proc/sys/net/ipv4/tcp_mem', f"{to_pages(max / 2)} {to_pages(max * 2/3)} {to_pages(max)}")
 
     def nic_is_bond_iface(self, nic):
         return self.__nic_is_bond_iface.get(nic, False)
@@ -1079,6 +1131,10 @@ class NetPerfTuner(PerfTunerBase):
         # For such NICs we've sorted IRQs list so that IRQs that handle Rx are all at the head of the list.
         if rx_channels_set or max_num_rx_queues < len(all_irqs):
             num_rx_queues = self.__get_rx_queue_count(iface)
+            # Let's be optimistic during a dry run and assume that the RX channels setting was successful
+            if dry_run_mode:
+                num_rx_queues = num_rx_channels
+
             tcp_irqs_lower_bound = self.__irq_lower_bound_by_queue(iface, all_irqs, num_rx_queues)
             perftune_print(f"Distributing IRQs handling Rx and Tx for first {num_rx_queues} channels:")
             distribute_irqs(all_irqs[0:tcp_irqs_lower_bound], self.irqs_cpu_mask)
@@ -1157,8 +1213,10 @@ class ClocksourceManager:
     def _get_arch(self):
         try:
             virt = run_read_only_command(['systemd-detect-virt']).strip()
-            if virt == "kvm":
-                return virt
+            # According to https://www.freedesktop.org/software/systemd/man/latest/systemd-detect-virt.html
+            # 'amazon' and 'google' are returned for KVM guests.
+            if virt in ["kvm", "amazon", "google"]:
+                return "kvm"
         except:
             pass
         return platform.machine()
@@ -1565,6 +1623,10 @@ class TuneModes(enum.Enum):
     def names():
         return list(TuneModes.__members__.keys())
 
+# Seastar defaults to allocating 93% of physical memory. The kernel's default allocation for TCP is ~9%. This adds up
+# to 102%. Reduce the TCP allocation to 3% to avoid OOM.
+default_tcp_mem_fraction = 0.03
+
 argp = argparse.ArgumentParser(description = 'Configure various system parameters in order to improve the seastar application performance.', formatter_class=argparse.RawDescriptionHelpFormatter,
                                epilog=
 '''
@@ -1592,7 +1654,7 @@ Modes description:
 
  If there isn't any mode given script will use a default mode:
     - If number of CPU cores is greater than 16, allocate a single IRQ CPU core for each 16 CPU cores in 'cpu_mask'.
-      IRQ cores are going to be allocated evenly on available NUMA nodes according to 'cpu_mask' value.  
+      IRQ cores are going to be allocated evenly on available NUMA nodes according to 'cpu_mask' value.
     - If number of physical CPU cores per Rx HW queue is greater than 4 and less than 16 - use the 'sq-split' mode.
     - Otherwise, if number of hyper-threads per Rx HW queue is greater than 4 - use the 'sq' mode.
     - Otherwise use the 'mq' mode.
@@ -1627,6 +1689,7 @@ argp.add_argument('--irq-core-auto-detection-ratio', help="Use a given ratio for
                                                           "CPU cores out of available according to a 'cpu_mask' value."
                                                           "Default is 16",
                   type=int, default=16, dest='cores_per_irq_core')
+argp.add_argument('--tcp-mem-fraction', default=default_tcp_mem_fraction, type=float, help="Fraction of total memory to allocate for TCP buffers")
 
 def parse_cpu_mask_from_yaml(y, field_name, fname):
     hex_32bit_pattern='0x[0-9a-fA-F]{1,8}'

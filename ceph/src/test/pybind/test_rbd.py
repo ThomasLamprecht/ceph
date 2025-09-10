@@ -13,14 +13,14 @@ import sys
 
 from assertions import (assert_equal as eq, assert_raises, assert_not_equal,
                         assert_greater_equal)
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from rados import (Rados,
                    LIBRADOS_SNAP_HEAD,
                    LIBRADOS_OP_FLAG_FADVISE_DONTNEED,
                    LIBRADOS_OP_FLAG_FADVISE_NOCACHE,
                    LIBRADOS_OP_FLAG_FADVISE_RANDOM)
 from rbd import (RBD, Group, Image, ImageNotFound, InvalidArgument, ImageExists,
-                 ImageBusy, ImageHasSnapshots, ReadOnlyImage,
+                 ImageBusy, ImageHasSnapshots, ReadOnlyImage, ObjectNotFound,
                  FunctionNotSupported, ArgumentOutOfRange, ImageMemberOfGroup,
                  ECANCELED, OperationCanceled,
                  DiskQuotaExceeded, ConnectionShutdown, PermissionError,
@@ -29,8 +29,9 @@ from rbd import (RBD, Group, Image, ImageNotFound, InvalidArgument, ImageExists,
                  RBD_FEATURE_DEEP_FLATTEN, RBD_FEATURE_FAST_DIFF,
                  RBD_FEATURE_OBJECT_MAP,
                  RBD_MIRROR_MODE_DISABLED, RBD_MIRROR_MODE_IMAGE,
-                 RBD_MIRROR_MODE_POOL, RBD_MIRROR_IMAGE_ENABLED,
-                 RBD_MIRROR_IMAGE_DISABLED, MIRROR_IMAGE_STATUS_STATE_UNKNOWN,
+                 RBD_MIRROR_MODE_POOL, RBD_MIRROR_MODE_INIT_ONLY,
+                 RBD_MIRROR_IMAGE_ENABLED, RBD_MIRROR_IMAGE_DISABLED,
+                 MIRROR_IMAGE_STATUS_STATE_UNKNOWN,
                  RBD_MIRROR_IMAGE_MODE_JOURNAL, RBD_MIRROR_IMAGE_MODE_SNAPSHOT,
                  RBD_LOCK_MODE_EXCLUSIVE, RBD_OPERATION_FEATURE_GROUP,
                  RBD_OPERATION_FEATURE_CLONE_CHILD,
@@ -49,7 +50,8 @@ from rbd import (RBD, Group, Image, ImageNotFound, InvalidArgument, ImageExists,
                  RBD_SNAP_CREATE_IGNORE_QUIESCE_ERROR,
                  RBD_WRITE_ZEROES_FLAG_THICK_PROVISION,
                  RBD_ENCRYPTION_FORMAT_LUKS1, RBD_ENCRYPTION_FORMAT_LUKS2,
-                 RBD_ENCRYPTION_FORMAT_LUKS)
+                 RBD_ENCRYPTION_FORMAT_LUKS, RBD_GROUP_SNAP_STATE_COMPLETE,
+                 RBD_GROUP_SNAP_NAMESPACE_TYPE_USER)
 
 rados = None
 ioctx = None
@@ -594,9 +596,9 @@ class TestImage(object):
         self.rbd = RBD()
         # {create,access,modify}_timestamp() have second precision,
         # allow for rounding
-        self.time_before_create = datetime.utcnow() - timedelta(seconds=1)
+        self.time_before_create = datetime.now(timezone.utc) - timedelta(seconds=1)
         create_image()
-        self.time_after_create = datetime.utcnow() + timedelta(seconds=1)
+        self.time_after_create = datetime.now(timezone.utc) + timedelta(seconds=1)
         self.image = Image(ioctx, image_name)
 
     def teardown_method(self, method):
@@ -1118,9 +1120,9 @@ class TestImage(object):
 
     def test_snap_timestamp(self):
         # get_snap_timestamp() has second precision, allow for rounding
-        time_before = datetime.utcnow() - timedelta(seconds=1)
+        time_before = datetime.now(timezone.utc) - timedelta(seconds=1)
         self.image.create_snap('snap1')
-        time_after = datetime.utcnow() + timedelta(seconds=1)
+        time_after = datetime.now(timezone.utc) + timedelta(seconds=1)
         eq(['snap1'], [snap['name'] for snap in self.image.list_snaps()])
         for snap in self.image.list_snaps():
             snap_id = snap["id"]
@@ -1861,6 +1863,11 @@ class TestClone(object):
 
     def test_clone_format(self):
         clone_name2 = get_temp_image_name()
+        assert_raises(InvalidArgument, self.rbd.clone, ioctx, image_name,
+                       'snap1', ioctx, clone_name2, features, clone_format=0)
+        assert_raises(InvalidArgument, self.rbd.clone, ioctx, image_name,
+                       'snap1', ioctx, clone_name2, features, clone_format=3)
+
         self.rbd.clone(ioctx, image_name, 'snap1', ioctx, clone_name2,
                        features, clone_format=1)
         with Image(ioctx, clone_name2) as clone2:
@@ -2517,6 +2524,94 @@ class TestMirroring(object):
         self.rbd.mirror_site_name_set(rados, "")
         eq(rados.get_fsid(), self.rbd.mirror_site_name_get(rados))
 
+    def test_mirror_remote_namespace(self):
+        eq("", self.rbd.mirror_remote_namespace_get(ioctx))
+        # cannot set remote namespace while mirroring enabled
+        assert_raises(InvalidArgument, self.rbd.mirror_remote_namespace_set,
+                      ioctx, "remote-ns1")
+        eq("", self.rbd.mirror_remote_namespace_get(ioctx))
+        assert_raises(InvalidArgument, self.rbd.mirror_remote_namespace_set,
+                      ioctx, "")
+        eq("", self.rbd.mirror_remote_namespace_get(ioctx))
+        self.rbd.mirror_mode_set(ioctx, RBD_MIRROR_MODE_INIT_ONLY)
+        eq("", self.rbd.mirror_remote_namespace_get(ioctx))
+        # set remote namespace for the default namespace while in init-only
+        self.rbd.mirror_remote_namespace_set(ioctx, "remote-ns1")
+        eq("remote-ns1", self.rbd.mirror_remote_namespace_get(ioctx))
+        # reset remote namespace for the default namespace while in init-only
+        self.rbd.mirror_remote_namespace_set(ioctx, "")
+        eq("", self.rbd.mirror_remote_namespace_get(ioctx))
+        # change remote namespace for the default namespace while in init-only
+        self.rbd.mirror_remote_namespace_set(ioctx, "remote-ns2")
+        eq("remote-ns2", self.rbd.mirror_remote_namespace_get(ioctx))
+        # disabling mirroring also resets remote namespace
+        self.rbd.mirror_mode_set(ioctx, RBD_MIRROR_MODE_DISABLED)
+        eq("", self.rbd.mirror_remote_namespace_get(ioctx))
+        # set remote namespace for the default namespace while mirroring disabled
+        self.rbd.mirror_remote_namespace_set(ioctx, "remote-ns3")
+        eq("remote-ns3", self.rbd.mirror_remote_namespace_get(ioctx))
+        # reset remote namespace for the default namespace while mirroring disabled
+        self.rbd.mirror_remote_namespace_set(ioctx, "")
+        eq("", self.rbd.mirror_remote_namespace_get(ioctx))
+        # change remote namespace for the default namespace while mirroring disabled
+        self.rbd.mirror_remote_namespace_set(ioctx, "remote-ns4")
+        eq("remote-ns4", self.rbd.mirror_remote_namespace_get(ioctx))
+        # moving to init-only or an enabled state preserves remote namespace
+        self.rbd.mirror_mode_set(ioctx, RBD_MIRROR_MODE_INIT_ONLY)
+        eq("remote-ns4", self.rbd.mirror_remote_namespace_get(ioctx))
+        self.rbd.mirror_mode_set(ioctx, RBD_MIRROR_MODE_POOL)
+        eq("remote-ns4", self.rbd.mirror_remote_namespace_get(ioctx))
+        self.rbd.mirror_mode_set(ioctx, RBD_MIRROR_MODE_IMAGE)
+        eq("remote-ns4", self.rbd.mirror_remote_namespace_get(ioctx))
+
+        self.rbd.namespace_create(ioctx, "ns1")
+        ioctx.set_namespace("ns1")
+        eq("ns1", self.rbd.mirror_remote_namespace_get(ioctx))
+        # set remote namespace on a non-default namespace while mirroring disabled
+        self.rbd.mirror_remote_namespace_set(ioctx, "remote-ns1")
+        eq("remote-ns1", self.rbd.mirror_remote_namespace_get(ioctx))
+        # reset remote namespace on a non-default namespace while mirroring disabled
+        self.rbd.mirror_remote_namespace_set(ioctx, "ns1")
+        eq("ns1", self.rbd.mirror_remote_namespace_get(ioctx))
+        # change remote namespace on a non-default namespace while mirroring disabled
+        self.rbd.mirror_remote_namespace_set(ioctx, "remote-ns2")
+        eq("remote-ns2", self.rbd.mirror_remote_namespace_get(ioctx))
+        # cannot move to init-only on a non-default namespace
+        assert_raises(InvalidArgument, self.rbd.mirror_mode_set,
+                      ioctx, RBD_MIRROR_MODE_INIT_ONLY)
+        eq(RBD_MIRROR_MODE_DISABLED, self.rbd.mirror_mode_get(ioctx))
+        # moving to an enabled state preserves remote namespace
+        self.rbd.mirror_mode_set(ioctx, RBD_MIRROR_MODE_IMAGE)
+        eq("remote-ns2", self.rbd.mirror_remote_namespace_get(ioctx))
+        self.rbd.mirror_mode_set(ioctx, RBD_MIRROR_MODE_POOL)
+        eq("remote-ns2", self.rbd.mirror_remote_namespace_get(ioctx))
+        # disabling mirroring also resets remote namespace
+        self.rbd.mirror_mode_set(ioctx, RBD_MIRROR_MODE_DISABLED)
+        eq("ns1", self.rbd.mirror_remote_namespace_get(ioctx))
+        # set remote namespace on a non-default namespace to the default namespace
+        self.rbd.mirror_remote_namespace_set(ioctx, "")
+        eq("", self.rbd.mirror_remote_namespace_get(ioctx))
+        # moving to an enabled state preserves remote namespace
+        self.rbd.mirror_mode_set(ioctx, RBD_MIRROR_MODE_POOL)
+        eq("", self.rbd.mirror_remote_namespace_get(ioctx))
+        self.rbd.mirror_mode_set(ioctx, RBD_MIRROR_MODE_IMAGE)
+        eq("", self.rbd.mirror_remote_namespace_get(ioctx))
+        # cannot set remote namespace while mirroring enabled
+        assert_raises(InvalidArgument, self.rbd.mirror_remote_namespace_set,
+                      ioctx, "remote-ns1")
+        eq("", self.rbd.mirror_remote_namespace_get(ioctx))
+        assert_raises(InvalidArgument, self.rbd.mirror_remote_namespace_set,
+                      ioctx, "ns1")
+        eq("", self.rbd.mirror_remote_namespace_get(ioctx))
+        assert_raises(InvalidArgument, self.rbd.mirror_remote_namespace_set,
+                      ioctx, "")
+        eq("", self.rbd.mirror_remote_namespace_get(ioctx))
+        # disabling mirroring clears remote namespace
+        self.rbd.mirror_mode_set(ioctx, RBD_MIRROR_MODE_DISABLED)
+        eq("ns1", self.rbd.mirror_remote_namespace_get(ioctx))
+        ioctx.set_namespace("")
+        self.rbd.namespace_remove(ioctx, "ns1")
+
     def test_mirror_peer_bootstrap(self):
         eq([], list(self.rbd.mirror_peer_list(ioctx)))
 
@@ -2583,6 +2678,11 @@ class TestMirroring(object):
         self.image.mirror_image_disable(True)
         info = self.image.mirror_image_get_info()
         self.check_info(info, '', RBD_MIRROR_IMAGE_DISABLED, False)
+        assert_raises(InvalidArgument, self.image.mirror_image_get_mode)
+        assert_raises(InvalidArgument, self.image.mirror_image_promote, False)
+        assert_raises(InvalidArgument, self.image.mirror_image_promote, True)
+        assert_raises(InvalidArgument, self.image.mirror_image_demote)
+        assert_raises(InvalidArgument, self.image.mirror_image_resync)
 
         self.image.mirror_image_enable()
         info = self.image.mirror_image_get_info()
@@ -2740,15 +2840,37 @@ class TestMirroring(object):
         peer_uuid = self.rbd.mirror_peer_add(ioctx, "cluster", "client")
         self.rbd.mirror_mode_set(ioctx, RBD_MIRROR_MODE_IMAGE)
         self.image.mirror_image_disable(False)
-        self.image.mirror_image_enable(RBD_MIRROR_IMAGE_MODE_SNAPSHOT)
 
+        # this is a list so that the local cb() can modify it
+        info = [123]
+        def cb(_, _info):
+            info[0] = _info
+
+        comp = self.image.aio_mirror_image_get_info(cb)
+        comp.wait_for_complete_and_cb()
+        assert_not_equal(info[0], None)
+        eq(comp.get_return_value(), 0)
+        eq(sys.getrefcount(comp), 2)
+        info = info[0]
+        self.check_info(info, "", RBD_MIRROR_IMAGE_DISABLED, False)
+
+        mode = [123]
+        def cb(_, _mode):
+            mode[0] = _mode
+
+        comp = self.image.aio_mirror_image_get_mode(cb)
+        comp.wait_for_complete_and_cb()
+        eq(comp.get_return_value(), -errno.EINVAL)
+        eq(sys.getrefcount(comp), 2)
+        eq(mode[0], None)
+
+        self.image.mirror_image_enable(RBD_MIRROR_IMAGE_MODE_SNAPSHOT)
         snaps = list(self.image.list_snaps())
         eq(1, len(snaps))
         snap = snaps[0]
         eq(snap['namespace'], RBD_SNAP_NAMESPACE_TYPE_MIRROR)
         eq(RBD_SNAP_MIRROR_STATE_PRIMARY, snap['mirror']['state'])
 
-        # this is a list so that the local cb() can modify it
         info = [None]
         def cb(_, _info):
             info[0] = _info
@@ -2940,6 +3062,9 @@ def test_list_groups_after_removed():
     eq([], RBD().group_list(ioctx))
 
 class TestGroups(object):
+    img_snap_keys = ['image_name', 'pool_id', 'snap_id']
+    gp_snap_keys = ['id', 'image_snap_name', 'image_snaps', 'name',
+                    'namespace_type', 'state']
 
     def setup_method(self, method):
         global snap_name
@@ -2985,6 +3110,11 @@ class TestGroups(object):
         assert_raises(ImageMemberOfGroup, RBD().remove, ioctx, image_name)
         eq([image_name], [img['name'] for img in self.group.list_images()])
 
+    def test_group_get_id(self):
+        id = self.group.id()
+        assert isinstance(id, str)
+        assert len(id) > 0
+
     def test_group_image_many_images(self):
         eq([], list(self.group.list_images()))
         self.group.add_image(ioctx, image_name)
@@ -3013,6 +3143,49 @@ class TestGroups(object):
         eq([], list(self.group.list_images()))
         with Image(ioctx, image_name) as image:
             eq(0, image.op_features() & RBD_OPERATION_FEATURE_GROUP)
+
+    def test_group_snap_get_info(self):
+        self.image_names.append(create_image())
+        self.image_names.sort()
+        self.group.add_image(ioctx, self.image_names[0])
+        self.group.add_image(ioctx, self.image_names[1])
+        pool_id = ioctx.get_pool_id()
+
+        assert_raises(ObjectNotFound, self.group.get_snap_info, "")
+
+        self.group.create_snap(snap_name)
+        snap_info_dict = self.group.get_snap_info(snap_name)
+        image_names = []
+        assert sorted(snap_info_dict.keys()) == self.gp_snap_keys
+        assert snap_info_dict['name'] == snap_name
+        assert snap_info_dict['state'] == RBD_GROUP_SNAP_STATE_COMPLETE
+        assert snap_info_dict['namespace_type'] == RBD_GROUP_SNAP_NAMESPACE_TYPE_USER
+        for image_snap in snap_info_dict['image_snaps']:
+            assert sorted(image_snap.keys()) == self.img_snap_keys
+            assert image_snap['pool_id'] == pool_id
+            image_names.append(image_snap['image_name'])
+            with Image(ioctx, image_snap['image_name']) as member_image:
+                snaps = [snap for snap in member_image.list_snaps()]
+            assert len(snaps) == 1
+            assert snaps[0]['name'] == snap_info_dict['image_snap_name']
+            assert snaps[0]['id'] == image_snap['snap_id']
+        assert sorted(image_names) == self.image_names
+
+        self.group.remove_snap(snap_name)
+        assert_raises(ObjectNotFound, self.group.get_snap_info, snap_name)
+
+    def test_group_snap_get_info_no_member_images(self):
+        self.group.create_snap(snap_name)
+
+        snap_info_dict = self.group.get_snap_info(snap_name)
+        assert sorted(snap_info_dict.keys()) == self.gp_snap_keys
+        assert snap_info_dict['name'] == snap_name
+        assert snap_info_dict['state'] == RBD_GROUP_SNAP_STATE_COMPLETE
+        assert snap_info_dict['namespace_type'] == RBD_GROUP_SNAP_NAMESPACE_TYPE_USER
+        assert snap_info_dict['image_snap_name'] == ""
+        assert snap_info_dict['image_snaps'] == []
+
+        self.group.remove_snap(snap_name)
 
     def test_group_snap(self):
         global snap_name
@@ -3051,18 +3224,30 @@ class TestGroups(object):
         eq([], list(self.group.list_snaps()))
 
     def test_group_snap_list_many(self):
+        self.image_names.append(create_image())
+        self.image_names.sort()
+        self.group.add_image(ioctx, self.image_names[0])
+        self.group.add_image(ioctx, self.image_names[1])
+
         global snap_name
-        eq([], list(self.group.list_snaps()))
+        assert list(self.group.list_snaps()) == []
         snap_names = []
         for x in range(0, 20):
             snap_names.append(snap_name)
             self.group.create_snap(snap_name)
             snap_name = get_temp_snap_name()
 
-        snap_names.sort()
-        answer = [snap['name'] for snap in self.group.list_snaps()]
-        answer.sort()
-        eq(snap_names, answer)
+        gp_snaps_list = self.group.list_snaps()
+        gp_snap_names = []
+        for gp_snap in gp_snaps_list:
+            assert sorted(gp_snap.keys()) == self.gp_snap_keys
+            gp_snap_names.append(gp_snap['name'])
+            image_names = []
+            for img_snap in gp_snap['image_snaps']:
+                assert sorted(img_snap.keys()) == self.img_snap_keys
+                image_names.append(img_snap['image_name'])
+            assert sorted(image_names) == self.image_names
+        assert sorted(gp_snap_names) == sorted(snap_names)
 
     def test_group_snap_namespace(self):
         global snap_name

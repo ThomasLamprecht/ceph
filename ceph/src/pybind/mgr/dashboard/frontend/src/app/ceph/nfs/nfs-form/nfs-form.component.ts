@@ -31,6 +31,8 @@ import { NfsFormClientComponent } from '../nfs-form-client/nfs-form-client.compo
 import { getFsalFromRoute, getPathfromFsal } from '../utils';
 import { CephfsSubvolumeService } from '~/app/shared/api/cephfs-subvolume.service';
 import { CephfsSubvolumeGroupService } from '~/app/shared/api/cephfs-subvolume-group.service';
+import { RgwUserService } from '~/app/shared/api/rgw-user.service';
+import { RgwExportType } from '../nfs-list/nfs-list.component';
 import { DEFAULT_SUBVOLUME_GROUP } from '~/app/shared/constants/cephfs.constant';
 
 @Component({
@@ -55,6 +57,8 @@ export class NfsFormComponent extends CdForm implements OnInit {
   icons = Icons;
 
   allFsNames: any[] = null;
+
+  allRGWUsers: any[] = null;
 
   storageBackend: SUPPORTED_FSAL;
   storageBackendError: string = null;
@@ -99,6 +103,7 @@ export class NfsFormComponent extends CdForm implements OnInit {
     private route: ActivatedRoute,
     private router: Router,
     private rgwBucketService: RgwBucketService,
+    private rgwUserService: RgwUserService,
     private rgwSiteService: RgwSiteService,
     private formBuilder: CdFormBuilder,
     private taskWrapper: TaskWrapperService,
@@ -116,7 +121,7 @@ export class NfsFormComponent extends CdForm implements OnInit {
     this.createForm();
     const promises: Observable<any>[] = [this.nfsService.listClusters()];
 
-    if (this.storageBackend === 'RGW') {
+    if (this.storageBackend === SUPPORTED_FSAL.RGW) {
       promises.push(this.rgwSiteService.get('realms'));
     } else {
       promises.push(this.nfsService.filesystems());
@@ -128,13 +133,25 @@ export class NfsFormComponent extends CdForm implements OnInit {
 
     if (this.isEdit) {
       this.action = this.actionLabels.EDIT;
-      this.route.params.subscribe((params: { cluster_id: string; export_id: string }) => {
-        this.cluster_id = decodeURIComponent(params.cluster_id);
-        this.export_id = decodeURIComponent(params.export_id);
-        promises.push(this.nfsService.get(this.cluster_id, this.export_id));
-        this.getData(promises);
-      });
+      this.route.params.subscribe(
+        (params: { cluster_id: string; export_id: string; rgw_export_type?: string }) => {
+          this.cluster_id = decodeURIComponent(params.cluster_id);
+          this.export_id = decodeURIComponent(params.export_id);
+          if (params.rgw_export_type) {
+            this.nfsForm.get('rgw_export_type').setValue(params.rgw_export_type);
+            if (params.rgw_export_type === RgwExportType.BUCKET) {
+              this.setBucket();
+            } else {
+              this.setUsers();
+            }
+          }
+          promises.push(this.nfsService.get(this.cluster_id, this.export_id));
+          this.getData(promises);
+        }
+      );
       this.nfsForm.get('cluster_id').disable();
+      this.nfsForm.get('fsal').disable();
+      this.nfsForm.get('path').disable();
     } else {
       this.action = this.actionLabels.CREATE;
       this.route.params.subscribe(
@@ -145,6 +162,10 @@ export class NfsFormComponent extends CdForm implements OnInit {
         }
       );
 
+      if (this.storageBackend === SUPPORTED_FSAL.RGW) {
+        this.nfsForm.get('rgw_export_type').setValue('bucket');
+        this.setBucket();
+      }
       this.getData(promises);
     }
   }
@@ -257,23 +278,10 @@ export class NfsFormComponent extends CdForm implements OnInit {
 
   createForm() {
     this.nfsForm = new CdFormGroup({
+      // Common fields
       cluster_id: new UntypedFormControl('', {
         validators: [Validators.required]
       }),
-      fsal: new CdFormGroup({
-        name: new UntypedFormControl(this.storageBackend, {
-          validators: [Validators.required]
-        }),
-        fs_name: new UntypedFormControl('', {
-          validators: [
-            CdValidators.requiredIf({
-              name: 'CEPH'
-            })
-          ]
-        })
-      }),
-      subvolume_group: new UntypedFormControl(this.defaultSubVolGroup),
-      subvolume: new UntypedFormControl(''),
       path: new UntypedFormControl('', {
         validators: [
           Validators.required,
@@ -318,9 +326,44 @@ export class NfsFormComponent extends CdForm implements OnInit {
       }),
       clients: this.formBuilder.array([]),
       security_label: new UntypedFormControl(false),
+
+      // FSAL fields (common for RGW and CephFS)
+      fsal: new CdFormGroup({
+        name: new UntypedFormControl(this.storageBackend, {
+          validators: [Validators.required]
+        }),
+        // RGW-specific field
+        user_id: new UntypedFormControl('', {
+          validators: [
+            CdValidators.requiredIf({
+              name: 'RGW'
+            })
+          ]
+        }),
+        // CephFS-specific field
+        fs_name: new UntypedFormControl('', {
+          validators: [
+            CdValidators.requiredIf({
+              name: 'CEPH'
+            })
+          ]
+        })
+      }),
+
+      // CephFS-specific fields
+      subvolume_group: new UntypedFormControl(this.defaultSubVolGroup),
+      subvolume: new UntypedFormControl(''),
       sec_label_xattr: new UntypedFormControl(
         'security.selinux',
         CdValidators.requiredIf({ security_label: true, 'fsal.name': 'CEPH' })
+      ),
+
+      // RGW-specific fields
+      rgw_export_type: new UntypedFormControl(
+        null,
+        CdValidators.requiredIf({
+          'fsal.name': 'RGW'
+        })
       )
     });
   }
@@ -371,8 +414,7 @@ export class NfsFormComponent extends CdForm implements OnInit {
   }
 
   resolveFsals(res: string[]) {
-    if (this.storageBackend === 'RGW') {
-      this.setPathValidation();
+    if (this.storageBackend === SUPPORTED_FSAL.RGW) {
       this.resolveRealms(res);
     } else {
       this.resolveFilesystems(res);
@@ -435,6 +477,29 @@ export class NfsFormComponent extends CdForm implements OnInit {
           }
         });
     }
+  }
+
+  setUsers() {
+    this.nfsForm.get('fsal.user_id').enable();
+    this.nfsForm.get('path').setValue('');
+    this.nfsForm.get('path').disable();
+    this.rgwUserService.list().subscribe((users: any) => {
+      this.allRGWUsers = users;
+    });
+  }
+
+  setBucket() {
+    this.nfsForm.get('path').enable();
+    this.nfsForm.get('fsal.user_id').setValue('');
+    this.nfsForm.get('fsal').disable();
+
+    this.setPathValidation();
+  }
+
+  onExportTypeChange() {
+    this.nfsForm.getValue('rgw_export_type') === RgwExportType.BUCKET
+      ? this.setBucket()
+      : this.setUsers();
   }
 
   accessTypeChangeHandler() {
@@ -552,15 +617,26 @@ export class NfsFormComponent extends CdForm implements OnInit {
 
   private buildRequest() {
     const requestModel: any = _.cloneDeep(this.nfsForm.value);
-
+    requestModel.fsal = this.nfsForm.get('fsal').value;
     if (this.isEdit) {
       requestModel.export_id = _.parseInt(this.export_id);
+      requestModel.path = this.nfsForm.get('path').value;
+      if (requestModel.fsal.name === SUPPORTED_FSAL.RGW) {
+        requestModel.fsal.user_id = this.nfsForm.getValue('fsal').user_id;
+      }
     }
 
-    if (requestModel.fsal.name === 'RGW') {
+    if (requestModel.fsal.name === SUPPORTED_FSAL.RGW) {
       delete requestModel.fsal.fs_name;
+      if (requestModel.rgw_export_type === 'bucket') {
+        delete requestModel.fsal.user_id;
+      } else {
+        requestModel.path = '';
+      }
+    } else {
+      delete requestModel.fsal.user_id;
     }
-
+    delete requestModel.rgw_export_type;
     delete requestModel.subvolume;
     delete requestModel.subvolume_group;
 

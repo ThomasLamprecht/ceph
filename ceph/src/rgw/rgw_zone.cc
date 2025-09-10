@@ -284,6 +284,7 @@ void RGWZoneParams::decode_json(JSONObj *obj)
   RGWSystemMetaObj::decode_json(obj);
   JSONDecoder::decode_json("domain_root", domain_root, obj);
   JSONDecoder::decode_json("control_pool", control_pool, obj);
+  JSONDecoder::decode_json("dedup_pool", dedup_pool, obj);
   JSONDecoder::decode_json("gc_pool", gc_pool, obj);
   JSONDecoder::decode_json("lc_pool", lc_pool, obj);
   JSONDecoder::decode_json("log_pool", log_pool, obj);
@@ -304,6 +305,7 @@ void RGWZoneParams::decode_json(JSONObj *obj)
   JSONDecoder::decode_json("placement_pools", placement_pools, obj);
   JSONDecoder::decode_json("tier_config", tier_config, obj);
   JSONDecoder::decode_json("realm_id", realm_id, obj);
+  JSONDecoder::decode_json("restore_pool", restore_pool, obj);
 }
 
 void RGWZoneParams::dump(Formatter *f) const
@@ -311,6 +313,7 @@ void RGWZoneParams::dump(Formatter *f) const
   RGWSystemMetaObj::dump(f);
   encode_json("domain_root", domain_root, f);
   encode_json("control_pool", control_pool, f);
+  encode_json("dedup_pool", dedup_pool, f);
   encode_json("gc_pool", gc_pool, f);
   encode_json("lc_pool", lc_pool, f);
   encode_json("log_pool", log_pool, f);
@@ -331,6 +334,7 @@ void RGWZoneParams::dump(Formatter *f) const
   encode_json("placement_pools", placement_pools, f);
   encode_json("tier_config", tier_config, f);
   encode_json("realm_id", realm_id, f);
+  encode_json("restore_pool", restore_pool, f);
 }
 
 int RGWZoneParams::init(const DoutPrefixProvider *dpp, 
@@ -472,6 +476,7 @@ void add_zone_pools(const RGWZoneParams& info,
 {
   pools.insert(info.domain_root);
   pools.insert(info.control_pool);
+  pools.insert(info.dedup_pool);
   pools.insert(info.gc_pool);
   pools.insert(info.log_pool);
   pools.insert(info.intent_log_pool);
@@ -790,7 +795,9 @@ void RGWZonePlacementInfo::decode_json(JSONObj *obj)
   JSONDecoder::decode_json("data_extra_pool", data_extra_pool, obj);
   uint32_t it;
   JSONDecoder::decode_json("index_type", it, obj);
-  JSONDecoder::decode_json("inline_data", inline_data, obj);
+  if(!JSONDecoder::decode_json("inline_data", inline_data, obj)) {
+    inline_data = true;
+  }
   index_type = (rgw::BucketIndexType)it;
 
   /* backward compatibility, these are now defined in storage_classes */
@@ -860,9 +867,14 @@ void RGWZoneGroupPlacementTier::decode_json(JSONObj *obj)
   JSONDecoder::decode_json("tier_type", tier_type, obj);
   JSONDecoder::decode_json("storage_class", storage_class, obj);
   JSONDecoder::decode_json("retain_head_object", retain_head_object, obj);
-
-  if (tier_type == "cloud-s3") {
+  if (is_tier_type_s3()) {
     JSONDecoder::decode_json("s3", t.s3, obj);
+  }
+  JSONDecoder::decode_json("allow_read_through", allow_read_through, obj);
+  JSONDecoder::decode_json("read_through_restore_days", read_through_restore_days, obj);
+  JSONDecoder::decode_json("restore_storage_class", restore_storage_class, obj);
+  if (is_tier_type_s3_glacier()) {
+    JSONDecoder::decode_json("s3-glacier", s3_glacier, obj);
   }
 }
 
@@ -892,14 +904,39 @@ void RGWZoneStorageClasses::decode_json(JSONObj *obj)
   standard_class = &m[RGW_STORAGE_CLASS_STANDARD];
 }
 
+void RGWZoneGroupTierS3Glacier::dump(Formatter *f) const
+{
+  encode_json("glacier_restore_days", glacier_restore_days, f);
+  string s = (glacier_restore_tier_type == Standard ? "Standard" : "Expedited");
+  encode_json("glacier_restore_tier_type", s, f);
+}
+
+void RGWZoneGroupTierS3Glacier::decode_json(JSONObj *obj)
+{
+  JSONDecoder::decode_json("glacier_restore_days", glacier_restore_days, obj);
+  string s;
+  JSONDecoder::decode_json("glacier_restore_tier_type", s, obj);
+  if (s != "Expedited") {
+    glacier_restore_tier_type = Standard;
+  } else {
+    glacier_restore_tier_type = Expedited;
+  }
+}
+
 void RGWZoneGroupPlacementTier::dump(Formatter *f) const
 {
   encode_json("tier_type", tier_type, f);
   encode_json("storage_class", storage_class, f);
   encode_json("retain_head_object", retain_head_object, f);
-
-  if (tier_type == "cloud-s3") {
+  if (is_tier_type_s3()) {
     encode_json("s3", t.s3, f);
+  }
+  encode_json("allow_read_through", allow_read_through, f);
+  encode_json("read_through_restore_days", read_through_restore_days, f);
+  encode_json("restore_storage_class", restore_storage_class, f);
+
+  if (is_tier_type_s3_glacier()) {
+    encode_json("s3-glacier", s3_glacier, f);
   }
 }
 
@@ -1242,8 +1279,10 @@ int init_zone_pool_names(const DoutPrefixProvider *dpp, optional_yield y,
 {
   info.domain_root = fix_zone_pool_dup(pools, info.name, ".rgw.meta:root", info.domain_root);
   info.control_pool = fix_zone_pool_dup(pools, info.name, ".rgw.control", info.control_pool);
+  info.dedup_pool = fix_zone_pool_dup(pools, info.name, ".rgw.dedup", info.dedup_pool);
   info.gc_pool = fix_zone_pool_dup(pools, info.name, ".rgw.log:gc", info.gc_pool);
   info.lc_pool = fix_zone_pool_dup(pools, info.name, ".rgw.log:lc", info.lc_pool);
+  info.restore_pool = fix_zone_pool_dup(pools, info.name, ".rgw.log:restore", info.restore_pool);
   info.log_pool = fix_zone_pool_dup(pools, info.name, ".rgw.log", info.log_pool);
   info.intent_log_pool = fix_zone_pool_dup(pools, info.name, ".rgw.log:intent", info.intent_log_pool);
   info.usage_log_pool = fix_zone_pool_dup(pools, info.name, ".rgw.log:usage", info.usage_log_pool);

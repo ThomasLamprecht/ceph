@@ -1,7 +1,7 @@
 // Boost.Geometry (aka GGL, Generic Geometry Library)
 // Unit Test
 
-// Copyright (c) 2015-2022, Oracle and/or its affiliates.
+// Copyright (c) 2015-2023, Oracle and/or its affiliates.
 
 // Contributed and/or modified by Vissarion Fysikopoulos, on behalf of Oracle
 // Contributed and/or modified by Menelaos Karavelas, on behalf of Oracle
@@ -22,8 +22,6 @@
 #include <iostream>
 #include <string>
 
-#include <boost/numeric/conversion/bounds.hpp>
-
 #include <from_wkt.hpp>
 #include <geometry_test_common.hpp>
 #include "test_envelope_expand_on_spheroid.hpp"
@@ -38,6 +36,7 @@
 #include <boost/geometry/index/detail/algorithms/is_valid.hpp>
 #include <boost/geometry/io/dsv/write.hpp>
 #include <boost/geometry/io/wkt/wkt.hpp>
+#include <boost/geometry/util/bounds.hpp>
 #include <boost/geometry/util/condition.hpp>
 #include <boost/geometry/util/type_traits.hpp>
 
@@ -175,7 +174,7 @@ private:
         stream << std::setprecision(17);
 
         stream << "; " << "expected: ";
-        
+
         if (BOOST_GEOMETRY_CONDITION(bg::dimension<Box>::value == 2))
         {
             stream << "(" << lon_min << " " << lat_min
@@ -492,8 +491,8 @@ void test_empty_geometry(std::string const& case_id, std::string const& wkt)
     typedef test_envelope_on_sphere_or_spheroid<Geometry, B> tester;
 
     typedef typename bg::coordinate_type<Geometry>::type ct;
-    ct high_val = boost::numeric::bounds<ct>::highest();
-    ct low_val = boost::numeric::bounds<ct>::lowest();
+    ct const high_val = bg::util::bounds<ct>::highest();
+    ct const low_val = bg::util::bounds<ct>::lowest();
 
     if (BOOST_GEOMETRY_CONDITION(dim == 2))
     {
@@ -1660,13 +1659,16 @@ void test_envelope_multipoint()
                   -10, 25, 40, 45);
 #endif
 
+    // For eps2 = eps or smaller the resulting box is invalid due to
+    // inaccurate calculation of bg::math::smaller() for fp numbers that are
+    // very close
     double eps = std::numeric_limits<double>::epsilon();
-    double heps = eps / 2;
+    double eps2 = eps * 2;
     {
         G mp;
         mp.push_back(P(1, 1));
-        mp.push_back(P(1-heps, 1-heps));
-        tester::apply("mp20", mp, 1-heps, 1-heps, 1, 1);
+        mp.push_back(P(1-eps2, 1-eps2));
+        tester::apply("mp20", mp, 1-eps2, 1-eps2, 1, 1);
     }
 }
 

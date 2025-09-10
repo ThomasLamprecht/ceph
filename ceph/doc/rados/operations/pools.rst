@@ -16,7 +16,7 @@ Pools provide:
   For example: a typical configuration stores three replicas
   (copies) of each RADOS object (that is: ``size = 3``), but you can configure
   the number of replicas on a per-pool basis. For `erasure-coded pools
-  <../erasure-code>`_, resilience is defined as the number of coding chunks
+  <../erasure-code>`_, resilience is defined as the number of coding (aka parity) chunks 
   (for example, ``m = 2`` in the default erasure code profile).
 
 - **Placement Groups**: The :ref:`autoscaler <pg-autoscaler>` sets the number
@@ -438,7 +438,7 @@ You may set values for the following keys:
 
 .. describe:: crush_rule
    
-   :Description: Sets the CRUSH rule that Ceph uses to map the pool's PDADOS objects to appropriate OSDs.
+   :Description: Sets the CRUSH rule that Ceph uses to map the pool's RADOS objects to appropriate OSDs.
    :Type: String
 
 .. _allow_ec_overwrites:
@@ -555,7 +555,7 @@ You may set values for the following keys:
 
 .. describe:: scrub_min_interval
    
-   :Description: Sets the minimum interval (in seconds) between successive shallow / light scrubs of the pool's PGs when the load is low. If the default value of ``0`` is in effect, then the value of ``osd_scrub_min_interval`` from central config is used.
+   :Description: Sets the minimum interval (in seconds) between successive shallow (light) scrubs of the pool's PGs. If this pool attribute is unchanged from its default (``0``), the value of ``osd_scrub_min_interval`` from central config is used instead.
 
    :Type: Double
    :Default: ``0``
@@ -564,7 +564,7 @@ You may set values for the following keys:
 
 .. describe:: scrub_max_interval
    
-   :Description: Sets the maximum interval (in seconds) between successive shallow / light scrubs of the pool's PGs regardless of cluster load. If the value of ``scrub_max_interval`` is ``0``, then the value ``osd_scrub_max_interval`` from central config is used.
+   :Description: Sets the maximum interval (in seconds) between successive shallow (light) scrubs of the pool's PGs. Affects the 'overdue' attribute appearing in scrub scheduler dumps. If unchanged from its default of ``0``, the value of ``osd_scrub_max_interval`` from central config is used instead.
 
    :Type: Double
    :Default: ``0``
@@ -573,7 +573,7 @@ You may set values for the following keys:
 
 .. describe:: deep_scrub_interval
    
-   :Description: Sets the interval (in seconds) for successive pool deep scrubs of the pool's PGs. If the value of ``deep_scrub_interval`` is ``0``, the value ``osd_deep_scrub_interval`` from central config is used.
+   :Description: Sets the interval (in seconds) for successive pool deep scrubs of the pool's PGs. If unchanged from its default of ``0``, the value of ``osd_deep_scrub_interval`` from central config is used instead.
 
    :Type: Double
    :Default: ``0``
@@ -844,7 +844,7 @@ To move the pool back to non-stretch, run a command of the following form:
 
 .. prompt:: bash $
 
-   ceph osd pool stretch unset {pool-name}
+   ceph osd pool stretch unset {pool-name} {crush_rule} {size} {min_size}
 
 Here are the breakdowns of the arguments:
 
@@ -854,6 +854,28 @@ Here are the breakdowns of the arguments:
    i.e., set with the command `ceph osd pool stretch set`.
 
    :Type: String
+   :Required: Yes.
+
+.. describe:: {crush_rule}
+      
+   The crush rule to use after exiting the stretch pool. The type of pool must match the type of crush_rule
+   (replicated or erasure).
+
+   :Type: String
+   :Required: Yes.
+
+.. describe:: {size}
+         
+   The number of replicas for objects after exiting stretch pool.
+   
+   :Type: Integer
+   :Required: Yes.
+
+.. describe:: {min_size}
+            
+   The minimum number of replicas required for I/O after exiting stretch pool.
+
+   :Type: Integer
    :Required: Yes.
 
 Showing values of a stretch pool

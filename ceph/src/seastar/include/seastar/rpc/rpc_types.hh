@@ -31,8 +31,8 @@
 #include <seastar/net/api.hh>
 #include <stdexcept>
 #include <string>
-#include <boost/any.hpp>
-#include <boost/type.hpp>
+#include <any>
+#include <seastar/util/assert.hh>
 #include <seastar/util/std-compat.hh>
 #include <seastar/util/variant_utils.hh>
 #include <seastar/core/timer.hh>
@@ -50,7 +50,7 @@ using rpc_clock_type = lowres_clock;
 
 // used to tag a type for serializers
 template<typename T>
-using type = boost::type<T>;
+using type = std::type_identity<T>;
 
 struct stats {
     using counter_type = uint64_t;
@@ -99,16 +99,16 @@ struct client_info {
     socket_address addr;
     rpc::server& server;
     connection_id conn_id;
-    std::unordered_map<sstring, boost::any> user_data;
+    std::unordered_map<sstring, std::any> user_data;
     template <typename T>
     void attach_auxiliary(const sstring& key, T&& object) {
-        user_data.emplace(key, boost::any(std::forward<T>(object)));
+        user_data.emplace(key, std::any(std::forward<T>(object)));
     }
     template <typename T>
     T& retrieve_auxiliary(const sstring& key) {
         auto it = user_data.find(key);
-        assert(it != user_data.end());
-        return boost::any_cast<T&>(it->second);
+        SEASTAR_ASSERT(it != user_data.end());
+        return std::any_cast<T&>(it->second);
     }
     template <typename T>
     std::add_const_t<T>& retrieve_auxiliary(const sstring& key) const {
@@ -120,7 +120,7 @@ struct client_info {
         if (it == user_data.end()) {
             return nullptr;
         }
-        return &boost::any_cast<T&>(it->second);
+        return &std::any_cast<T&>(it->second);
     }
     template <typename T>
     const T* retrieve_auxiliary_opt(const sstring& key) const noexcept {
@@ -128,7 +128,7 @@ struct client_info {
         if (it == user_data.end()) {
             return nullptr;
         }
-        return &boost::any_cast<const T&>(it->second);
+        return &std::any_cast<const T&>(it->second);
     }
 };
 
@@ -286,7 +286,7 @@ public:
     virtual rcv_buf decompress(rcv_buf data) = 0;
     virtual sstring name() const = 0;
     virtual future<> close() noexcept { return make_ready_future<>(); };
-    
+
     // factory to create compressor for a connection
     class factory {
     public:
@@ -294,7 +294,7 @@ public:
         // return feature string that will be sent as part of protocol negotiation
         virtual const sstring& supported() const = 0;
         // negotiate compress algorithm
-        // send_empty_frame() requests an empty frame to be sent to the peer compressor on the other side of the connection. 
+        // send_empty_frame() requests an empty frame to be sent to the peer compressor on the other side of the connection.
         // By attaching a header to this empty frame, the compressor can communicate somthing to the peer,
         // send_empty_frame() mustn't be called from inside compress() or decompress().
         virtual std::unique_ptr<compressor> negotiate(sstring feature, bool is_server, std::function<future<>()> send_empty_frame) const {
@@ -403,8 +403,10 @@ public:
 
 /// @}
 
+#ifndef SEASTAR_P2581R1
 template <typename... T>
 tuple(T&&...) ->  tuple<T...>;
+#endif
 
 } // namespace rpc
 

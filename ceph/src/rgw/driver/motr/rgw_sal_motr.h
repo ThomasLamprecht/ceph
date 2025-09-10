@@ -419,8 +419,11 @@ public:
   virtual ~MotrPlacementTier() = default;
 
   virtual const std::string& get_tier_type() { return tier.tier_type; }
+  virtual bool is_tier_type_s3() { return (tier.is_tier_type_s3()); }
   virtual const std::string& get_storage_class() { return tier.storage_class; }
   virtual bool retain_head_object() { return tier.retain_head_object; }
+  virtual bool allow_read_through() { return tier.allow_read_through; }
+  virtual uint64_t get_read_through_restore_days() { return tier.read_through_restore_days; }
   RGWZoneGroupPlacementTier& get_rt() { return tier; }
 };
 
@@ -677,10 +680,11 @@ class MotrObject : public StoreObject {
         const DoutPrefixProvider* dpp, optional_yield y) override;
     virtual RGWAccessControlPolicy& get_acl(void) override { return acls; }
     virtual int set_acl(const RGWAccessControlPolicy& acl) override { acls = acl; return 0; }
-    virtual int get_obj_state(const DoutPrefixProvider* dpp, RGWObjState **state, optional_yield y, bool follow_olh = true) override;
+    virtual int load_obj_state(const DoutPrefixProvider* dpp, optional_yield y, bool follow_olh = true) override;
     virtual int set_obj_attrs(const DoutPrefixProvider* dpp, Attrs* setattrs, Attrs* delattrs, optional_yield y, uint32_t flags) override;
     virtual int get_obj_attrs(optional_yield y, const DoutPrefixProvider* dpp, rgw_obj* target_obj = NULL) override;
-    virtual int modify_obj_attrs(const char* attr_name, bufferlist& attr_val, optional_yield y, const DoutPrefixProvider* dpp) override;
+    virtual int modify_obj_attrs(const char* attr_name, bufferlist& attr_val, optional_yield y, const DoutPrefixProvider* dpp,
+                                 uint32_t flags = rgw::sal::FLAG_LOG_OP) override;
     virtual int delete_obj_attrs(const DoutPrefixProvider* dpp, const char* attr_name, optional_yield y) override;
     virtual bool is_expired() override;
     virtual void gen_rand_obj_instance_name() override;
@@ -792,6 +796,7 @@ class MotrAtomicWriter : public StoreWriter {
   virtual int complete(size_t accounted_size, const std::string& etag,
                        ceph::real_time *mtime, ceph::real_time set_mtime,
                        std::map<std::string, bufferlist>& attrs,
+		       const std::optional<rgw::cksum::Cksum>& cksum,
                        ceph::real_time delete_at,
                        const char *if_match, const char *if_nomatch,
                        const std::string *user_data,
@@ -840,6 +845,7 @@ public:
   virtual int complete(size_t accounted_size, const std::string& etag,
                        ceph::real_time *mtime, ceph::real_time set_mtime,
                        std::map<std::string, bufferlist>& attrs,
+		       const std::optional<rgw::cksum::Cksum>& cksum,
                        ceph::real_time delete_at,
                        const char *if_match, const char *if_nomatch,
                        const std::string *user_data,
@@ -889,6 +895,9 @@ public:
   virtual uint64_t get_size() { return info.accounted_size; }
   virtual const std::string& get_etag() { return info.etag; }
   virtual ceph::real_time& get_mtime() { return info.modified; }
+  virtual const std::optional<rgw::cksum::Cksum>& get_cksum() {
+    return info.cksum;
+  }
 
   RGWObjManifest& get_manifest() { return info.manifest; }
 
@@ -997,6 +1006,9 @@ class MotrStore : public StoreDriver {
     virtual int list_all_zones(const DoutPrefixProvider* dpp, std::list<std::string>& zone_ids) override;
     virtual int cluster_stat(RGWClusterStat& stats) override;
     virtual std::unique_ptr<Lifecycle> get_lifecycle(void) override;
+    virtual std::unique_ptr<Restore> get_restore(const int n_objs,
+		   const std::vector<std::string_view>& obj_names) override;
+    virtual bool process_expired_objects(const DoutPrefixProvider *dpp, optional_yield y) override;
     virtual std::unique_ptr<Notification> get_notification(rgw::sal::Object* obj, rgw::sal::Object* src_obj,
         req_state* s, rgw::notify::EventType event_type, optional_yield y, const std::string* object_name=nullptr) override;
     virtual std::unique_ptr<Notification> get_notification(
@@ -1010,6 +1022,7 @@ class MotrStore : public StoreDriver {
         std::string& _req_id,
         optional_yield y) override;
     virtual RGWLC* get_rgwlc(void) override { return NULL; }
+    virtual RGWRestore* get_rgwrestore(void) override { return NULL; }
     virtual RGWCoroutinesManagerRegistry* get_cr_registry() override { return NULL; }
 
     virtual int log_usage(const DoutPrefixProvider *dpp, std::map<rgw_user_bucket, RGWUsageBatch>& usage_info) override;
@@ -1193,6 +1206,19 @@ struct obj_time_weight {
     mtime = state->mtime;
     zone_short_id = state->zone_short_id;
     pg_ver = state->pg_ver;
+    bufferlist bl;
+    if (state->get_attr(RGW_ATTR_INTERNAL_MTIME, bl)) {
+      try {
+        auto iter = bl.cbegin();
+        real_time internal_mtime;
+        decode(internal_mtime, iter);
+        if (internal_mtime > mtime) {
+          mtime = internal_mtime;
+        }
+      } catch (buffer::error& err) {
+        ldpp_dout(dpp, 0) << "ERROR: couldn't decode RGW_ATTR_INTERNAL_MTIME" << dendl;
+      }
+    }
   }
 };
 

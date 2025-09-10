@@ -1,83 +1,115 @@
 #
-# Copyright (c) 2019-2023 Ruben Perez Hidalgo (rubenperez038 at gmail dot com)
+# Copyright (c) 2019-2024 Ruben Perez Hidalgo (rubenperez038 at gmail dot com)
 #
 # Distributed under the Boost Software License, Version 1.0. (See accompanying
 # file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
 #
 
 # Note: examples count as integration tests. This is only processed
-# when we're the main project and BOOST_MYSQL_INTEGRATION_TESTS is on
-find_package(Boost ${BOOST_MYSQL_VERSION} REQUIRED COMPONENTS context)
-
-# Compile the example
-function (build_example EXECUTABLE_NAME CPPFILE)
-    add_executable(
-        ${EXECUTABLE_NAME}
-        ${CPPFILE}
-    )
-    target_link_libraries(
-        ${EXECUTABLE_NAME}
-        PRIVATE
-        Boost::disable_autolinking
-        Boost::mysql
-        Boost::context
-        boost_mysql_asio
-    )
-    common_target_settings(${EXECUTABLE_NAME})
-endfunction()
-
-# Run it as a test
-function (test_example EXECUTABLE_NAME CONNECTION_ARG)
-    add_test(
-        NAME ${EXECUTABLE_NAME}
-        COMMAND ${EXECUTABLE_NAME} example_user example_password ${CONNECTION_ARG}
-    )
-endfunction()
-
-# Run it as a test using Valgrind
-function (memcheck_example EXECUTABLE_NAME CONNECTION_ARG)
-    set(TEST_NAME "${EXECUTABLE_NAME}_memcheck")
-    add_memcheck_test(
-        NAME ${TEST_NAME}
-        TARGET ${EXECUTABLE_NAME}
-        ARGUMENTS example_user example_password ${CONNECTION_ARG}
-    )
-endfunction()
-
-# Build and run it as either of them
-function (add_example EXAMPLE_NAME DO_MEMCHECK CONNECTION_ARG)
-    set(EXECUTABLE_NAME "boost_mysql_example_${EXAMPLE_NAME}")
-
-    build_example(${EXECUTABLE_NAME} "${EXAMPLE_NAME}.cpp")
-
-    if (BOOST_MYSQL_VALGRIND_TESTS AND DO_MEMCHECK)
-        memcheck_example(${EXECUTABLE_NAME} ${CONNECTION_ARG})
-    else()
-        test_example(${EXECUTABLE_NAME} ${CONNECTION_ARG})
-    endif()
-endfunction()
+# when BOOST_MYSQL_INTEGRATION_TESTS is on
 
 # Get the MySQL hostname to use for examples
 if(DEFINED ENV{BOOST_MYSQL_SERVER_HOST})
     set(SERVER_HOST $ENV{BOOST_MYSQL_SERVER_HOST})
 else()
-    set(SERVER_HOST "localhost")
+    set(SERVER_HOST "127.0.0.1")
 endif()
 
-# Build and run all the examples
-add_example(snippets                    TRUE    ${SERVER_HOST})
-add_example(tutorial                    TRUE    ${SERVER_HOST})
-add_example(text_queries                TRUE    ${SERVER_HOST})
-add_example(prepared_statements         TRUE    ${SERVER_HOST})
-add_example(async_callbacks             TRUE    ${SERVER_HOST})
-add_example(async_coroutines            FALSE   ${SERVER_HOST})
-add_example(async_coroutinescpp20       TRUE    ${SERVER_HOST})
-add_example(async_futures               TRUE    ${SERVER_HOST})
-add_example(default_completion_tokens   TRUE    ${SERVER_HOST})
-add_example(metadata                    TRUE    ${SERVER_HOST})
-add_example(ssl                         TRUE    ${SERVER_HOST})
-add_example(timeouts                    TRUE    ${SERVER_HOST})
-if ("$ENV{BOOST_MYSQL_NO_UNIX_SOCKET_TESTS}" STREQUAL "")
-    add_example(unix_socket             TRUE    "/var/run/mysqld/mysqld.sock")
+add_library(boost_mysql_examples_common INTERFACE)
+target_link_libraries(
+    boost_mysql_examples_common
+    INTERFACE
+    boost_mysql_compiled
+)
+
+
+function(add_example EXAMPLE_NAME)
+    # Parse the arguments
+    set(ONE_VALUE_ARGS PYTHON_RUNNER)
+    set(MULTI_VALUE_ARGS SOURCES LIBS ARGS)
+    cmake_parse_arguments(ADD_EXAMPLE "" "${ONE_VALUE_ARGS}" "${MULTI_VALUE_ARGS}" ${ARGN})
+
+    # Create the target
+    set(TARGET_NAME "boost_mysql_example_${EXAMPLE_NAME}")
+    add_executable(${TARGET_NAME} ${ADD_EXAMPLE_SOURCES})
+    target_link_libraries(${TARGET_NAME} PRIVATE boost_mysql_examples_common)
+    boost_mysql_common_target_settings(${TARGET_NAME})
+    target_link_libraries(${TARGET_NAME} PRIVATE ${ADD_EXAMPLE_LIBS})
+
+    # Add it as a test
+    if (ADD_EXAMPLE_PYTHON_RUNNER)
+        add_test(
+            NAME ${TARGET_NAME}
+            COMMAND
+            python
+            ${CMAKE_CURRENT_SOURCE_DIR}/private/${ADD_EXAMPLE_PYTHON_RUNNER}
+            $<TARGET_FILE:${TARGET_NAME}>
+            ${ADD_EXAMPLE_ARGS}
+        )
+    else()
+        add_test(
+            NAME ${TARGET_NAME}
+            COMMAND ${TARGET_NAME} ${ADD_EXAMPLE_ARGS}
+        )
+    endif()
+endfunction()
+
+function(add_tutorial EXAMPLE_NAME EXAMPLE_PATH)
+    add_example(${EXAMPLE_NAME} SOURCES "1_tutorial/${EXAMPLE_PATH}" ${ARGN})
+endfunction()
+
+function(add_simple_example EXAMPLE_NAME)
+    add_example(${EXAMPLE_NAME} SOURCES "2_simple/${EXAMPLE_NAME}.cpp" ${ARGN})
+endfunction()
+
+set(REGULAR_ARGS example_user example_password ${SERVER_HOST})
+
+# Tutorials
+add_tutorial(tutorial_sync                 1_sync.cpp                  ARGS ${REGULAR_ARGS})
+add_tutorial(tutorial_async                2_async.cpp                 ARGS ${REGULAR_ARGS})
+add_tutorial(tutorial_with_params          3_with_params.cpp           ARGS ${REGULAR_ARGS} 1)
+add_tutorial(tutorial_static_interface     4_static_interface.cpp      ARGS ${REGULAR_ARGS} 1        LIBS Boost::pfr)
+add_tutorial(tutorial_updates_transactions 5_updates_transactions.cpp  ARGS ${REGULAR_ARGS} 1 "John" LIBS Boost::pfr)
+add_tutorial(tutorial_connection_pool      6_connection_pool.cpp       ARGS ${SERVER_HOST}           LIBS Boost::pfr
+    PYTHON_RUNNER run_tutorial_connection_pool.py)
+add_tutorial(tutorial_error_handling       7_error_handling.cpp        ARGS ${SERVER_HOST} --test-errors  LIBS Boost::pfr
+    PYTHON_RUNNER run_tutorial_connection_pool.py)
+
+# Simple
+add_simple_example(inserts                      ARGS ${REGULAR_ARGS} "John" "Doe" "HGS")
+add_simple_example(deletes                      ARGS ${REGULAR_ARGS} 20)
+add_simple_example(callbacks                    ARGS ${REGULAR_ARGS})
+add_simple_example(coroutines_cpp11             ARGS ${REGULAR_ARGS} LIBS Boost::context)
+add_simple_example(batch_inserts                ARGS ${SERVER_HOST}  PYTHON_RUNNER run_batch_inserts.py LIBS Boost::json)
+add_simple_example(batch_inserts_generic        ARGS ${SERVER_HOST}  PYTHON_RUNNER run_batch_inserts.py LIBS Boost::json)
+add_simple_example(patch_updates                ARGS ${SERVER_HOST}  PYTHON_RUNNER run_patch_updates.py)
+add_simple_example(dynamic_filters              ARGS ${SERVER_HOST}  PYTHON_RUNNER run_dynamic_filters.py)
+add_simple_example(disable_tls                  ARGS ${REGULAR_ARGS})
+add_simple_example(tls_certificate_verification ARGS ${REGULAR_ARGS})
+add_simple_example(metadata                     ARGS ${REGULAR_ARGS})
+add_simple_example(prepared_statements          ARGS ${REGULAR_ARGS} "HGS")
+add_simple_example(pipeline                     ARGS ${REGULAR_ARGS} "HGS")
+add_simple_example(multi_function               ARGS ${REGULAR_ARGS})
+add_simple_example(source_script                ARGS ${REGULAR_ARGS} ${CMAKE_CURRENT_SOURCE_DIR}/private/test_script.sql)
+
+# UNIX sockets. Don't run the example on Windows machines
+if (NOT WIN32)
+    add_simple_example(unix_socket ARGS example_user example_password)
 endif()
 
+# Advanced
+add_example(
+    connection_pool
+    SOURCES
+        3_advanced/connection_pool/repository.cpp
+        3_advanced/connection_pool/handle_request.cpp
+        3_advanced/connection_pool/server.cpp
+        3_advanced/connection_pool/main.cpp
+    LIBS
+        Boost::context
+        Boost::json
+        Boost::url
+        Boost::beast
+    PYTHON_RUNNER run_connection_pool.py
+    ARGS ${SERVER_HOST}
+)

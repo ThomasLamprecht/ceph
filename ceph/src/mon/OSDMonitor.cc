@@ -111,6 +111,9 @@ using ceph::ErasureCodeProfile;
 using ceph::Formatter;
 using ceph::JSONFormatter;
 using ceph::make_message;
+using ceph::make_timespan;
+using ceph::timespan_str;
+using namespace std::literals;
 
 #define dout_subsys ceph_subsys_mon
 static const string OSD_PG_CREATING_PREFIX("osd_pg_creating");
@@ -481,15 +484,13 @@ OSDMonitor::OSDMonitor(
   }
 }
 
-const char **OSDMonitor::get_tracked_conf_keys() const
+std::vector<std::string> OSDMonitor::get_tracked_keys() const noexcept
 {
-  static const char* KEYS[] = {
-    "mon_memory_target",
-    "mon_memory_autotune",
-    "rocksdb_cache_size",
-    NULL
+  return {
+    "mon_memory_target"s,
+    "mon_memory_autotune"s,
+    "rocksdb_cache_size"s
   };
-  return KEYS;
 }
 
 void OSDMonitor::handle_conf_change(const ConfigProxy& conf,
@@ -502,6 +503,7 @@ void OSDMonitor::handle_conf_change(const ConfigProxy& conf,
   }
   if (changed.count("mon_memory_target") ||
       changed.count("rocksdb_cache_size")) {
+    _set_cache_autotuning();
     int r = _update_mon_cache_settings();
     if (r < 0) {
       derr << __func__ << " mon_memory_target:"
@@ -678,16 +680,16 @@ void OSDMonitor::create_initial()
   if (newmap.nearfull_ratio > 1.0) newmap.nearfull_ratio /= 100;
 
   // new cluster should require latest by default
-  if (g_conf().get_val<bool>("mon_debug_no_require_squid")) {
-    if (g_conf().get_val<bool>("mon_debug_no_require_reef")) {
-      derr << __func__ << " mon_debug_no_require_squid and reef=true" << dendl;
-      newmap.require_osd_release = ceph_release_t::quincy;
-    } else {
-      derr << __func__ << " mon_debug_no_require_squid=true" << dendl;
+  if (g_conf().get_val<bool>("mon_debug_no_require_tentacle")) {
+    if (g_conf().get_val<bool>("mon_debug_no_require_squid")) {
+      derr << __func__ << " mon_debug_no_require_tentacle and squid=true" << dendl;
       newmap.require_osd_release = ceph_release_t::reef;
+    } else {
+      derr << __func__ << " mon_debug_no_require_tentacle=true" << dendl;
+      newmap.require_osd_release = ceph_release_t::squid;
     }
   } else {
-    newmap.require_osd_release = ceph_release_t::squid;
+    newmap.require_osd_release = ceph_release_t::tentacle;
   }
 
   ceph_release_t r = ceph_release_from_name(g_conf()->mon_osd_initial_require_min_compat_client);
@@ -1257,10 +1259,8 @@ OSDMonitor::update_pending_pgs(const OSDMap::Incremental& inc,
   }
 
   // process queue
-  unsigned max = std::max<int64_t>(1, g_conf()->mon_osd_max_creating_pgs);
   const auto total = pending_creatings.pgs.size();
-  while (pending_creatings.pgs.size() < max &&
-	 !pending_creatings.queue.empty()) {
+  while (!pending_creatings.queue.empty()) {
     auto p = pending_creatings.queue.begin();
     int64_t poolid = p->first;
     dout(10) << __func__ << " pool " << poolid
@@ -1268,21 +1268,16 @@ OSDMonitor::update_pending_pgs(const OSDMap::Incremental& inc,
 	     << " modified " << p->second.modified
 	     << " [" << p->second.start << "-" << p->second.end << ")"
 	     << dendl;
-    int64_t n = std::min<int64_t>(max - pending_creatings.pgs.size(),
-				  p->second.end - p->second.start);
-    ps_t first = p->second.start;
-    ps_t end = first + n;
-    for (ps_t ps = first; ps < end; ++ps) {
+    for (ps_t ps = p->second.start; ps < p->second.end; ++ps) {
       const pg_t pgid{ps, static_cast<uint64_t>(poolid)};
-      // NOTE: use the *current* epoch as the PG creation epoch so that the
-      // OSD does not have to generate a long set of PastIntervals.
+      // The current epoch must be the pool creation epoch
       pending_creatings.pgs.emplace(
 	pgid,
-	creating_pgs_t::pg_create_info(inc.epoch,
+	creating_pgs_t::pg_create_info(p->second.created,
 				       p->second.modified));
       dout(10) << __func__ << " adding " << pgid << dendl;
     }
-    p->second.start = end;
+    p->second.start = p->second.end;
     if (p->second.done()) {
       dout(10) << __func__ << " done with queue for " << poolid << dendl;
       pending_creatings.queue.erase(p);
@@ -1529,9 +1524,11 @@ void OSDMonitor::prime_pg_temp(
   {
     std::lock_guard l(prime_pg_temp_lock);
     // do not touch a mapping if a change is pending
+    std::vector<int> pg_temp = pool ? next.pgtemp_primaryfirst(*pool, acting) :
+                                      acting;
     pending_inc.new_pg_temp.emplace(
       pgid,
-      mempool::osdmap::vector<int>(acting.begin(), acting.end()));
+      mempool::osdmap::vector<int>(pg_temp.begin(), pg_temp.end()));
   }
 }
 
@@ -3050,27 +3047,26 @@ bool OSDMonitor::preprocess_mark_me_dead(MonOpRequestRef op)
   int from = m->target_osd;
 
   // check permissions
-  if (check_source(op, m->fsid)) {
-    mon.no_reply(op);
-    return true;
-  }
+  if (check_source(op, m->fsid))
+    goto done;
 
   // first, verify the reporting host is valid
-  if (!m->get_orig_source().is_osd()) {
-    mon.no_reply(op);
-    return true;
-  }
+  if (!m->get_orig_source().is_osd())
+    goto done;
 
   if (!osdmap.exists(from) ||
       !osdmap.is_down(from)) {
     dout(5) << __func__ << " from nonexistent or up osd." << from
 	    << ", ignoring" << dendl;
     send_incremental(op, m->get_epoch()+1);
-    mon.no_reply(op);
-    return true;
+    goto done;
   }
 
   return false;
+
+ done:
+  mon.no_reply(op);
+  return true;
 }
 
 bool OSDMonitor::prepare_mark_me_dead(MonOpRequestRef op)
@@ -3497,26 +3493,26 @@ bool OSDMonitor::preprocess_boot(MonOpRequestRef op)
   ceph_assert(m->get_orig_source_inst().name.is_osd());
 
   // lower bound of N-2
-  if (!HAVE_FEATURE(m->osd_features, SERVER_QUINCY)) {
+  if (!HAVE_FEATURE(m->osd_features, SERVER_REEF)) {
     mon.clog->info() << "disallowing boot of OSD "
 		     << m->get_orig_source_inst()
-		     << " because the osd lacks CEPH_FEATURE_SERVER_QUINCY";
+		     << " because the osd lacks CEPH_FEATURE_SERVER_REEF";
     goto ignore;
   }
 
   // make sure osd versions do not span more than 3 releases
-  if (HAVE_FEATURE(m->osd_features, SERVER_REEF) &&
-      osdmap.require_osd_release < ceph_release_t::pacific) {
-    mon.clog->info() << "disallowing boot of reef+ OSD "
-		      << m->get_orig_source_inst()
-		      << " because require_osd_release < pacific";
-    goto ignore;
-  }
   if (HAVE_FEATURE(m->osd_features, SERVER_SQUID) &&
       osdmap.require_osd_release < ceph_release_t::quincy) {
     mon.clog->info() << "disallowing boot of squid+ OSD "
 		      << m->get_orig_source_inst()
 		      << " because require_osd_release < quincy";
+    goto ignore;
+  }
+  if (HAVE_FEATURE(m->osd_features, SERVER_TENTACLE) &&
+      osdmap.require_osd_release < ceph_release_t::reef) {
+    mon.clog->info() << "disallowing boot of tentacle+ OSD "
+		      << m->get_orig_source_inst()
+		      << " because require_osd_release < reef";
     goto ignore;
   }
 
@@ -4196,8 +4192,18 @@ bool OSDMonitor::prepare_pgtemp(MonOpRequestRef op)
                << ": pool has been removed" << dendl;
       continue;
     }
+    // Pools with allow_ec_optimizations set store pg_temp in a different
+    // order to change the primary selection algorithm without breaking
+    // old clients. If necessary re-order the new pg_temp now
+    pg_pool_t pg_pool;
+    if (pending_inc.new_pools.count(pool))
+      pg_pool = pending_inc.new_pools[pool];
+    else
+      pg_pool = *osdmap.get_pg_pool(pool);
+
+    std::vector<int> pg_temp = osdmap.pgtemp_primaryfirst(pg_pool, p->second);
     pending_inc.new_pg_temp[p->first] =
-      mempool::osdmap::vector<int>(p->second.begin(), p->second.end());
+      mempool::osdmap::vector<int>(pg_temp.begin(), pg_temp.end());
 
     // unconditionally clear pg_primary (until this message can encode
     // a change for that, too.. at which point we need to also fix
@@ -5235,9 +5241,7 @@ void OSDMonitor::tick()
   }
 
   // expire blocklisted items?
-  for (ceph::unordered_map<entity_addr_t,utime_t>::iterator p = osdmap.blocklist.begin();
-       p != osdmap.blocklist.end();
-       ++p) {
+  for (auto p = osdmap.blocklist.begin(); p != osdmap.blocklist.end(); ++p) {
     if (p->second < now) {
       dout(10) << "expiring blocklist item " << p->first << " expired " << p->second << " < now " << now << dendl;
       pending_inc.old_blocklist.push_back(p->first);
@@ -5421,7 +5425,8 @@ namespace {
     CSUM_TYPE, CSUM_MAX_BLOCK, CSUM_MIN_BLOCK, FINGERPRINT_ALGORITHM,
     PG_AUTOSCALE_MODE, PG_NUM_MIN, TARGET_SIZE_BYTES, TARGET_SIZE_RATIO,
     PG_AUTOSCALE_BIAS, DEDUP_TIER, DEDUP_CHUNK_ALGORITHM, 
-    DEDUP_CDC_CHUNK_SIZE, POOL_EIO, BULK, PG_NUM_MAX, READ_RATIO };
+    DEDUP_CDC_CHUNK_SIZE, POOL_EIO, BULK, PG_NUM_MAX, READ_RATIO,
+    EC_OPTIMIZATIONS };
 
   std::set<osd_pool_get_choices>
     subtract_second_from_first(const std::set<osd_pool_get_choices>& first,
@@ -6003,9 +6008,7 @@ bool OSDMonitor::preprocess_command(MonOpRequestRef op)
     if (f)
       f->open_array_section("blocklist");
 
-    for (ceph::unordered_map<entity_addr_t,utime_t>::iterator p = osdmap.blocklist.begin();
-	 p != osdmap.blocklist.end();
-	 ++p) {
+    for (auto p = osdmap.blocklist.begin(); p != osdmap.blocklist.end(); ++p) {
       if (f) {
 	f->open_object_section("entry");
 	f->dump_string("addr", p->first.get_legacy_str());
@@ -6228,7 +6231,8 @@ bool OSDMonitor::preprocess_command(MonOpRequestRef op)
       {"dedup_chunk_algorithm", DEDUP_CHUNK_ALGORITHM},
       {"dedup_cdc_chunk_size", DEDUP_CDC_CHUNK_SIZE},
       {"bulk", BULK},
-      {"read_ratio", READ_RATIO}
+      {"read_ratio", READ_RATIO},
+      {"allow_ec_optimizations", EC_OPTIMIZATIONS}
     };
 
     typedef std::set<osd_pool_get_choices> choices_set_t;
@@ -6243,7 +6247,7 @@ bool OSDMonitor::preprocess_command(MonOpRequestRef op)
       HIT_SET_GRADE_DECAY_RATE, HIT_SET_SEARCH_LAST_N
     };
     const choices_set_t ONLY_ERASURE_CHOICES = {
-      EC_OVERWRITES, ERASURE_CODE_PROFILE
+      EC_OVERWRITES, ERASURE_CODE_PROFILE, EC_OPTIMIZATIONS
     };
     const choices_set_t ONLY_REPLICA_CHOICES = {
       READ_RATIO
@@ -6475,17 +6479,23 @@ bool OSDMonitor::preprocess_command(MonOpRequestRef op)
 	  case DEDUP_CHUNK_ALGORITHM:
 	  case DEDUP_CDC_CHUNK_SIZE:
           case READ_RATIO:
-            pool_opts_t::key_t key = pool_opts_t::get_opt_desc(i->first).key;
-            if (p->opts.is_set(key)) {
-              if(*it == CSUM_TYPE) {
-                int64_t val;
-                p->opts.get(pool_opts_t::CSUM_TYPE, &val);
-                f->dump_string(i->first.c_str(), Checksummer::get_csum_type_string(val));
-              } else {
-                p->opts.dump(i->first, f.get());
-              }
+	    {
+	      pool_opts_t::key_t key = pool_opts_t::get_opt_desc(i->first).key;
+	      if (p->opts.is_set(key)) {
+		if(*it == CSUM_TYPE) {
+		  int64_t val;
+		  p->opts.get(pool_opts_t::CSUM_TYPE, &val);
+		  f->dump_string(i->first.c_str(), Checksummer::get_csum_type_string(val));
+		} else {
+		  p->opts.dump(i->first, f.get());
+		}
+	      }
 	    }
             break;
+	  case EC_OPTIMIZATIONS:
+	    f->dump_bool("allow_ec_optimizations",
+			 p->has_flag(pg_pool_t::FLAG_EC_OPTIMIZATIONS));
+	    break;
 	}
       }
       f->close_section();
@@ -6656,6 +6666,11 @@ bool OSDMonitor::preprocess_command(MonOpRequestRef op)
                 }
 	      }
 	    }
+	    break;
+	  case EC_OPTIMIZATIONS:
+	    ss << "allow_ec_optimizations: " <<
+	      (p->has_flag(pg_pool_t::FLAG_EC_OPTIMIZATIONS) ? "true" : "false") <<
+	      "\n";
 	    break;
 	}
 	rdata.append(ss.str());
@@ -8216,12 +8231,12 @@ int OSDMonitor::prepare_new_pool(string& name,
   pg_pool_t *pi = pending_inc.get_new_pool(pool, &empty);
   pi->create_time = ceph_clock_now();
   pi->type = pool_type;
-  pi->fast_read = fread; 
+  pi->fast_read = fread;
   pi->flags = g_conf()->osd_pool_default_flags;
   if (bulk) {
     pi->set_flag(pg_pool_t::FLAG_BULK);
   } else if (g_conf()->osd_pool_default_flag_bulk) {
-      pi->set_flag(pg_pool_t::FLAG_BULK);
+    pi->set_flag(pg_pool_t::FLAG_BULK);
   }
   if (g_conf()->osd_pool_default_flag_hashpspool)
     pi->set_flag(pg_pool_t::FLAG_HASHPSPOOL);
@@ -8321,6 +8336,11 @@ int OSDMonitor::prepare_new_pool(string& name,
   pi->cache_min_flush_age = g_conf()->osd_pool_default_cache_min_flush_age;
   pi->cache_min_evict_age = g_conf()->osd_pool_default_cache_min_evict_age;
 
+  if (cct->_conf.get_val<bool>("osd_pool_default_flag_ec_optimizations")) {
+    // This will fail if the pool cannot support ec optimizations.
+    enable_pool_ec_optimizations(*pi, nullptr, true);
+  }
+
   pending_inc.new_pool_names[pool] = name;
   return 0;
 }
@@ -8349,6 +8369,70 @@ bool OSDMonitor::prepare_unset_flag(MonOpRequestRef op, int flag)
   wait_for_commit(op, new Monitor::C_Command(mon, op, 0, ss.str(),
 						    get_last_committed() + 1));
   return true;
+}
+
+int OSDMonitor::enable_pool_ec_optimizations(pg_pool_t &p,
+    stringstream *ss, bool enable) {
+  if (!p.is_erasure()) {
+    if (ss) {
+      *ss << "allow_ec_optimizations can only be enabled for an erasure coded pool";
+    }
+    return -EINVAL;
+  }
+  if (osdmap.require_osd_release < ceph_release_t::tentacle) {
+    if (ss) {
+      *ss << "All OSDs must be upgraded to tentacle or "
+           << "later before setting allow_ec_optimizations";
+    }
+    return -EINVAL;
+  }
+  if (enable) {
+    ErasureCodeInterfaceRef erasure_code;
+    unsigned int k, m;
+    stringstream tmp;
+    int err = get_erasure_code(p.erasure_code_profile, &erasure_code, &tmp);
+    if (err == 0) {
+      k = erasure_code->get_data_chunk_count();
+      m = erasure_code->get_coding_chunk_count();
+    } else {
+      if (ss) {
+        *ss << "get_erasure_code failed: " << tmp.str();
+      }
+      return -EINVAL;
+    }
+    if ((erasure_code->get_supported_optimizations() &
+        ErasureCodeInterface::FLAG_EC_PLUGIN_OPTIMIZED_SUPPORTED) == 0) {
+      if (ss) {
+        *ss << "ec optimizations not currently supported for pool profile.";
+      }
+      return -EINVAL;
+    }
+    // Restrict the set of shards that can be a primary to the 1st data
+    // raw_shard (raw_shard 0) and the coding parity raw_shards because§
+    // the other shards (including local parity for LRC) may not have
+    // up to date copies of xattrs including OI
+    p.nonprimary_shards.clear();
+    for (raw_shard_id_t raw_shard; raw_shard < k + m; ++raw_shard) {
+      if (raw_shard > 0 && raw_shard < k) {
+	shard_id_t shard;
+	if (erasure_code->get_chunk_mapping().size() > raw_shard ) {
+	  shard = shard_id_t(erasure_code->get_chunk_mapping().at(int(raw_shard)));
+	} else {
+	  shard = shard_id_t(int(raw_shard));
+	}
+        p.nonprimary_shards.insert(shard);
+      }
+    }
+    p.flags |= pg_pool_t::FLAG_EC_OPTIMIZATIONS;
+  } else {
+    if ((p.flags & pg_pool_t::FLAG_EC_OPTIMIZATIONS) != 0) {
+      if (ss) {
+        *ss << "allow_ec_optimizations cannot be disabled once enabled";
+      }
+      return -EINVAL;
+    }
+  }
+  return 0;
 }
 
 int OSDMonitor::prepare_command_pool_set(const cmdmap_t& cmdmap,
@@ -8809,11 +8893,42 @@ int OSDMonitor::prepare_command_pool_set(const cmdmap_t& cmdmap,
     if (val == "true" || (interr.empty() && n == 1)) {
 	p.flags |= pg_pool_t::FLAG_EC_OVERWRITES;
     } else if (val == "false" || (interr.empty() && n == 0)) {
-      ss << "ec overwrites cannot be disabled once enabled";
-      return -EINVAL;
+      if ((p.flags & pg_pool_t::FLAG_EC_OVERWRITES) != 0) {
+	ss << "ec overwrites cannot be disabled once enabled";
+	return -EINVAL;
+      }
     } else {
       ss << "expecting value 'true', 'false', '0', or '1'";
       return -EINVAL;
+    }
+  } else if (var == "allow_ec_optimizations") {
+    bool enable = false;
+    if (val == "true" || (interr.empty() && n == 1)) {
+      enable = true;
+    } else if (val == "false" || (interr.empty() && n == 0)) {
+      enable = false;
+    } else {
+      ss << "expecting value 'true', 'false', '0', or '1'";
+      return -EINVAL;
+    }
+    bool was_enabled = p.allows_ecoptimizations();
+    int r = enable_pool_ec_optimizations(p, nullptr, enable);
+    if (r != 0) {
+      return r;
+    }
+    if (!was_enabled && p.allows_ecoptimizations()) {
+      // Pools with allow_ec_optimizations set store pg_temp in a different
+      // order to change the primary selection algorithm without breaking
+      // old clients. Modify any existing pg_temp for the pool now.
+      // This is only needed when switching on optimisations after creation.
+      for (auto pg_temp = osdmap.pg_temp->begin();
+           pg_temp != osdmap.pg_temp->end();
+           ++pg_temp) {
+        if (pg_temp->first.pool() == pool) {
+          std::vector<int> new_pg_temp = osdmap.pgtemp_primaryfirst(p, pg_temp->second);
+          pending_inc.new_pg_temp[pg_temp->first] = mempool::osdmap::vector<int>(new_pg_temp.begin(), new_pg_temp.end());
+        }
+      }
     }
   } else if (var == "target_max_objects") {
     if (interr.length()) {
@@ -9250,11 +9365,44 @@ int OSDMonitor::prepare_command_pool_stretch_unset(const cmdmap_t& cmdmap,
     ss << "pool " << pool_name << " is not a stretch pool";
     return -ENOENT;
   }
+  CrushWrapper& crush = _get_stable_crush();
+  string crush_rule_str;
+  cmd_getval(cmdmap, "crush_rule", crush_rule_str);
+  if (crush_rule_str.empty()) {
+    ss << "crush_rule must be provided";
+    return -EINVAL;
+  }
+
+  int crush_rule = crush.get_rule_id(crush_rule_str);
+  if (crush_rule < 0) {
+    ss << "crush rule " << crush_rule_str << " does not exist";
+    return -ENOENT;
+  }
+
+  if (!crush.rule_valid_for_pool_type(crush_rule, p.get_type())) {
+    ss << "crush rule " << crush_rule << " type does not match pool";
+    return -EINVAL;
+  }
+
+  int64_t pool_size = cmd_getval_or<int64_t>(cmdmap, "size", 0);
+  if (pool_size < 0) {
+    ss << "pool size must be non-negative";
+    return -EINVAL;
+  }
+
+  int64_t pool_min_size = cmd_getval_or<int64_t>(cmdmap, "min_size", 0);
+  if (pool_min_size < 0) {
+    ss << "pool min_size must be non-negative";
+    return -EINVAL;
+  }
 
   // unset stretch values
   p.peering_crush_bucket_count = 0;
   p.peering_crush_bucket_target = 0;
   p.peering_crush_bucket_barrier = 0;
+  p.crush_rule = static_cast<__u8>(crush_rule);
+  p.size = static_cast<__u8>(pool_size);
+  p.min_size = static_cast<__u8>(pool_min_size);
   p.last_change = pending_inc.epoch;
   pending_inc.new_pools[pool] = p;
   ss << "pool " << pool_name
@@ -11945,20 +12093,7 @@ bool OSDMonitor::prepare_command_impl(MonOpRequestRef op,
       err = -EPERM;
       goto reply_no_propose;
     }
-    if (rel == ceph_release_t::quincy) {
-      if (!mon.monmap->get_required_features().contains_all(
-	    ceph::features::mon::FEATURE_QUINCY)) {
-	ss << "not all mons are quincy";
-	err = -EPERM;
-	goto reply_no_propose;
-      }
-      if ((!HAVE_FEATURE(osdmap.get_up_osd_features(), SERVER_QUINCY))
-           && !sure) {
-	ss << "not all up OSDs have CEPH_FEATURE_SERVER_QUINCY feature";
-	err = -EPERM;
-	goto reply_no_propose;
-      }
-    } else if (rel == ceph_release_t::reef) {
+    if (rel == ceph_release_t::reef) {
       if (!mon.monmap->get_required_features().contains_all(
 	    ceph::features::mon::FEATURE_REEF)) {
 	ss << "not all mons are reef";
@@ -11981,6 +12116,19 @@ bool OSDMonitor::prepare_command_impl(MonOpRequestRef op,
       if ((!HAVE_FEATURE(osdmap.get_up_osd_features(), SERVER_SQUID))
            && !sure) {
 	ss << "not all up OSDs have CEPH_FEATURE_SERVER_SQUID feature";
+	err = -EPERM;
+	goto reply_no_propose;
+      }
+    } else if (rel == ceph_release_t::tentacle) {
+      if (!mon.monmap->get_required_features().contains_all(
+	    ceph::features::mon::FEATURE_TENTACLE)) {
+	ss << "not all mons are tentacle";
+	err = -EPERM;
+	goto reply_no_propose;
+      }
+      if ((!HAVE_FEATURE(osdmap.get_up_osd_features(), SERVER_TENTACLE))
+           && !sure) {
+	ss << "not all up OSDs have CEPH_FEATURE_SERVER_TENTACLE feature";
 	err = -EPERM;
 	goto reply_no_propose;
       }
@@ -14264,6 +14412,65 @@ bool OSDMonitor::prepare_command_impl(MonOpRequestRef op,
     wait_for_commit(op, new Monitor::C_Command(mon, op, 0, rs,
 						   get_last_committed() + 1));
     return true;
+  } else if (prefix == "osd pool clear-availability-status") {
+    if (!g_conf().get_val<bool>("enable_availability_tracking")) {
+      ss << "Availability tracking is disabled. Availability status can not be cleared "
+      << "while the feature is disabled. Enable it by setting the config "
+      << "option enable_availability_tracking to ``true`` then try again.";
+      err = -EOPNOTSUPP;
+      goto reply_no_propose;
+    }
+
+    string pool_name;
+    cmd_getval(cmdmap, "pool", pool_name);
+    int64_t pool_id = osdmap.lookup_pg_pool_name(pool_name);
+    // check if pool exists
+    if (pool_id < 0) {
+      ss << "unrecognized pool '" << pool_name << "'";
+      err = -ENOENT;
+      goto reply_no_propose;
+    }
+    std::map<uint64_t, PoolAvailability> pool_availability = mon.mgrstatmon()->get_pool_availability();
+    // check if pool exists in pool_availability
+    if (pool_availability.find(pool_id) == pool_availability.end()){
+      ss << "unrecognized pool '" << pool_name << "'";
+      err = -ENOENT;
+      goto reply_no_propose;
+    }
+    // clear existing calculations
+    mon.mgrstatmon()->clear_pool_availability(pool_id);
+  } else if (prefix == "osd pool availability-status") {
+    if (!g_conf().get_val<bool>("enable_availability_tracking")) {
+      ss << "availability tracking is disabled; you can enable it by setting the config option enable_availability_tracking";
+      err = -EOPNOTSUPP;
+      goto reply_no_propose;
+    }
+    TextTable tbl;
+    tbl.define_column("POOL", TextTable::LEFT, TextTable::LEFT);
+    tbl.define_column("UPTIME", TextTable::LEFT, TextTable::RIGHT);
+    tbl.define_column("DOWNTIME", TextTable::LEFT, TextTable::RIGHT);
+    tbl.define_column("NUMFAILURES", TextTable::LEFT, TextTable::RIGHT);
+    tbl.define_column("MTBF", TextTable::LEFT, TextTable::RIGHT);
+    tbl.define_column("MTTR", TextTable::LEFT, TextTable::RIGHT);
+    tbl.define_column("SCORE", TextTable::LEFT, TextTable::RIGHT);
+    tbl.define_column("AVAILABLE", TextTable::LEFT, TextTable::RIGHT);
+    std::map<uint64_t, PoolAvailability> pool_availability = mon.mgrstatmon()->get_pool_availability();
+    for (const auto& i : pool_availability) {
+      const auto& p = i.second;
+      double mtbf = p.num_failures > 0 ? (p.uptime / p.num_failures) : 0;
+      double mttr = p.num_failures > 0 ? (p.downtime / p.num_failures) : 0;
+      double score = mtbf > 0 ? mtbf / (mtbf +  mttr): 1.0;
+      tbl << p.pool_name;
+      tbl << timespan_str(make_timespan(p.uptime));
+      tbl << timespan_str(make_timespan(p.downtime));
+      tbl << p.num_failures;
+      tbl << timespan_str(make_timespan(mtbf));
+      tbl << timespan_str(make_timespan(mttr));
+      tbl << score;
+      tbl << p.is_avail;
+      tbl << TextTable::endrow;
+    }
+    rdata.append(stringify(tbl));
   } else if (prefix == "osd force-create-pg") {
     pg_t pgid;
     string pgidstr;

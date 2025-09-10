@@ -18,7 +18,6 @@ import { CdTableColumn } from '~/app/shared/models/cd-table-column';
 import { CdTableFetchDataContext } from '~/app/shared/models/cd-table-fetch-data-context';
 import { CdTableSelection } from '~/app/shared/models/cd-table-selection';
 import { CephfsSubvolume } from '~/app/shared/models/cephfs-subvolume.model';
-import { ModalService } from '~/app/shared/services/modal.service';
 import { CephfsSubvolumeFormComponent } from '../cephfs-subvolume-form/cephfs-subvolume-form.component';
 import { AuthStorageService } from '~/app/shared/services/auth-storage.service';
 import { Permissions } from '~/app/shared/models/permissions';
@@ -34,8 +33,8 @@ import { CephfsSubvolumeGroup } from '~/app/shared/models/cephfs-subvolume-group
 import { CephfsMountDetailsComponent } from '../cephfs-mount-details/cephfs-mount-details.component';
 import { HealthService } from '~/app/shared/api/health.service';
 import _ from 'lodash';
-
-const DEFAULT_SUBVOLUME_GROUP = '_nogroup';
+import { ModalCdsService } from '~/app/shared/services/modal-cds.service';
+import { DEFAULT_SUBVOLUME_GROUP } from '~/app/shared/constants/cephfs.constant';
 import { DeletionImpact } from '~/app/shared/enum/delete-confirmation-modal-impact.enum';
 
 @Component({
@@ -89,7 +88,7 @@ export class CephfsSubvolumeListComponent extends CdForm implements OnInit, OnCh
   constructor(
     private cephfsSubVolumeService: CephfsSubvolumeService,
     private actionLabels: ActionLabelsI18n,
-    private modalService: ModalService,
+    private modalService: ModalCdsService,
     private authStorageService: AuthStorageService,
     private taskWrapper: TaskWrapperService,
     private cephfsSubvolumeGroupService: CephfsSubvolumeGroupService,
@@ -232,17 +231,13 @@ export class CephfsSubvolumeListComponent extends CdForm implements OnInit, OnCh
   }
 
   openModal(edit = false) {
-    this.modalService.show(
-      CephfsSubvolumeFormComponent,
-      {
-        fsName: this.fsName,
-        subVolumeName: this.selection?.first()?.name,
-        subVolumeGroupName: this.activeGroupName,
-        pools: this.pools,
-        isEdit: edit
-      },
-      { size: 'lg' }
-    );
+    this.modalService.show(CephfsSubvolumeFormComponent, {
+      fsName: this.fsName,
+      subVolumeName: this.selection?.first()?.name,
+      subVolumeGroupName: this.activeGroupName,
+      pools: this.pools,
+      isEdit: edit
+    });
   }
 
   removeSubVolumeModal() {
@@ -251,9 +246,9 @@ export class CephfsSubvolumeListComponent extends CdForm implements OnInit, OnCh
     });
     this.errorMessage = '';
     this.selectedName = this.selection.first().name;
-    this.modalRef = this.modalService.show(DeleteConfirmationModalComponent, {
-      actionDescription: 'Remove',
+    this.modalService.show(DeleteConfirmationModalComponent, {
       impact: DeletionImpact.high,
+      actionDescription: 'remove',
       itemNames: [this.selectedName],
       itemDescription: 'Subvolume',
       childFormGroup: this.removeForm,
@@ -270,7 +265,7 @@ export class CephfsSubvolumeListComponent extends CdForm implements OnInit, OnCh
             )
           })
           .subscribe({
-            complete: () => this.modalRef.close(),
+            complete: () => this.modalService.dismissAll(),
             error: (error) => {
               this.modalRef.componentInstance.stopLoadingSpinner();
               this.errorMessage = error.error.detail;

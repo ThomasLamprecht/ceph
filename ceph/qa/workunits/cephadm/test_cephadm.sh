@@ -10,10 +10,9 @@ FSID='00000000-0000-0000-0000-0000deadbeef'
 
 # images that are used
 IMAGE_MAIN=${IMAGE_MAIN:-'quay.ceph.io/ceph-ci/ceph:main'}
-IMAGE_QUINCY=${IMAGE_QUINCY:-'quay.ceph.io/ceph-ci/ceph:quincy'}
 IMAGE_REEF=${IMAGE_REEF:-'quay.ceph.io/ceph-ci/ceph:reef'}
 IMAGE_SQUID=${IMAGE_SQUID:-'quay.ceph.io/ceph-ci/ceph:squid'}
-IMAGE_DEFAULT=${IMAGE_SQUID}
+IMAGE_DEFAULT=${IMAGE_MAIN}
 
 OSD_IMAGE_NAME="${SCRIPT_NAME%.*}_osd.img"
 OSD_IMAGE_SIZE='6G'

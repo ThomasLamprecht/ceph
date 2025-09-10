@@ -7,7 +7,6 @@ set(isa_srcs
   ErasureCodeIsa.cc
   ErasureCodeIsaTableCache.cc
   ErasureCodePluginIsa.cc
-  xor_op.cc
 )
 
 add_library(ec_isa SHARED

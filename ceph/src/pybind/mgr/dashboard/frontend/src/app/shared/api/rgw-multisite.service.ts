@@ -2,6 +2,7 @@ import { HttpClient, HttpParams } from '@angular/common/http';
 import { Injectable } from '@angular/core';
 import { RgwRealm, RgwZone, RgwZonegroup } from '~/app/ceph/rgw/models/rgw-multisite';
 import { RgwDaemonService } from './rgw-daemon.service';
+import { BehaviorSubject } from 'rxjs';
 
 @Injectable({
   providedIn: 'root'
@@ -10,9 +11,12 @@ export class RgwMultisiteService {
   private uiUrl = 'ui-api/rgw/multisite';
   private url = 'api/rgw/multisite';
 
+  private restartGatewayMessageSource = new BehaviorSubject<boolean>(null);
+  restartGatewayMessage$ = this.restartGatewayMessageSource.asObservable();
+
   constructor(private http: HttpClient, public rgwDaemonService: RgwDaemonService) {}
 
-  migrate(realm: RgwRealm, zonegroup: RgwZonegroup, zone: RgwZone) {
+  migrate(realm: RgwRealm, zonegroup: RgwZonegroup, zone: RgwZone, username: string) {
     return this.rgwDaemonService.request((params: HttpParams) => {
       params = params.appendAll({
         realm_name: realm.name,
@@ -20,8 +24,7 @@ export class RgwMultisiteService {
         zone_name: zone.name,
         zonegroup_endpoints: zonegroup.endpoints,
         zone_endpoints: zone.endpoints,
-        access_key: zone.system_key.access_key,
-        secret_key: zone.system_key.secret_key
+        username: username
       });
       return this.http.put(`${this.uiUrl}/migrate`, null, { params: params });
     });
@@ -74,6 +77,40 @@ export class RgwMultisiteService {
     return this.http.delete(`${this.url}/sync-policy-group/${group_id}`, { params });
   }
 
+  setUpMultisiteReplication(
+    realmName: string,
+    zonegroupName: string,
+    zonegroupEndpoints: string,
+    zoneName: string,
+    zoneEndpoints: string,
+    username: string,
+    cluster?: string,
+    replicationZoneName?: string,
+    clusterDetailsArray?: any
+  ) {
+    let params = new HttpParams()
+      .set('realm_name', realmName)
+      .set('zonegroup_name', zonegroupName)
+      .set('zonegroup_endpoints', zonegroupEndpoints)
+      .set('zone_name', zoneName)
+      .set('zone_endpoints', zoneEndpoints)
+      .set('username', username);
+
+    if (cluster) {
+      params = params.set('cluster_fsid', cluster);
+    }
+
+    if (clusterDetailsArray) {
+      params = params.set('cluster_details', JSON.stringify(clusterDetailsArray));
+    }
+
+    if (replicationZoneName) {
+      params = params.set('replication_zone_name', replicationZoneName);
+    }
+
+    return this.http.post(`${this.uiUrl}/multisite-replications`, null, { params: params });
+  }
+
   createEditSyncFlow(payload: any) {
     return this.http.put(`${this.url}/sync-flow`, payload);
   }
@@ -111,5 +148,9 @@ export class RgwMultisiteService {
       `${this.url}/sync-pipe/${encodeURIComponent(group_id)}/${encodeURIComponent(pipe_id)}`,
       { params }
     );
+  }
+
+  setRestartGatewayMessage(value: boolean): void {
+    this.restartGatewayMessageSource.next(value);
   }
 }

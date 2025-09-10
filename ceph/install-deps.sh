@@ -23,9 +23,7 @@ fi
 DIR=/tmp/install-deps.$$
 trap "rm -fr $DIR" EXIT
 mkdir -p $DIR
-if test $(id -u) != 0 ; then
-    SUDO=sudo
-fi
+wrap_sudo
 # enable UTF-8 encoding for programs like pip that expect to
 # print more than just ascii chars
 export LC_ALL=C.UTF-8
@@ -34,15 +32,15 @@ ARCH=$(uname -m)
 
 
 function munge_ceph_spec_in {
-    local with_seastar=$1
+    local with_crimson=$1
     shift
     local for_make_check=$1
     shift
     local OUTFILE=$1
     sed -e 's/@//g' < ceph.spec.in > $OUTFILE
     # http://rpm.org/user_doc/conditional_builds.html
-    if $with_seastar; then
-        sed -i -e 's/%bcond_with seastar/%bcond_without seastar/g' $OUTFILE
+    if $with_crimson; then
+        sed -i -e 's/%bcond_with crimson/%bcond_without crimson/g' $OUTFILE
     fi
     if $for_make_check; then
         sed -i -e 's/%bcond_with make_check/%bcond_without make_check/g' $OUTFILE
@@ -134,14 +132,14 @@ function install_pkg_on_ubuntu {
     fi
     if test -n "$missing_pkgs"; then
         local shaman_url="https://shaman.ceph.com/api/repos/${project}/master/${sha1}/ubuntu/${codename}/repo"
-        in_jenkins && echo -n "CI_DEBUG: Downloading $shaman_url ... "
+        ci_debug "Downloading $shaman_url ... "
         $SUDO curl --silent --fail --write-out "%{http_code}" --location $shaman_url --output /etc/apt/sources.list.d/$project.list
         $SUDO env DEBIAN_FRONTEND=noninteractive apt-get update -y -o Acquire::Languages=none -o Acquire::Translation=none || true
         $SUDO env DEBIAN_FRONTEND=noninteractive apt-get install --allow-unauthenticated -y $missing_pkgs
     fi
 }
 
-boost_ver=1.82
+boost_ver=1.87
 
 function clean_boost_on_ubuntu {
     ci_debug "Running clean_boost_on_ubuntu() in install-deps.sh"
@@ -193,7 +191,7 @@ function install_boost_on_ubuntu {
                               cut -d'.' -f1,2)
     local codename=$1
     local project=libboost
-    local sha1=2804368f5b807ba8334b0ccfeb8af191edeb996f
+    local sha1=9ea1fb8bdad548a88004db87761f173aa50dcc85
     install_pkg_on_ubuntu \
         $project \
         $sha1 \
@@ -205,7 +203,9 @@ function install_boost_on_ubuntu {
         ceph-libboost-context${boost_ver}-dev \
         ceph-libboost-coroutine${boost_ver}-dev \
         ceph-libboost-date-time${boost_ver}-dev \
+        ceph-libboost-exception${boost_ver}-dev \
         ceph-libboost-filesystem${boost_ver}-dev \
+        ceph-libboost-graph${boost_ver}-dev \
         ceph-libboost-iostreams${boost_ver}-dev \
         ceph-libboost-locale${boost_ver}-dev \
         ceph-libboost-program-options${boost_ver}-dev \
@@ -216,41 +216,9 @@ function install_boost_on_ubuntu {
         ceph-libboost-test${boost_ver}-dev \
         ceph-libboost-thread${boost_ver}-dev \
         ceph-libboost-timer${boost_ver}-dev \
+        ceph-libboost-url${boost_ver}-dev \
 	|| ci_debug "ceph-libboost package unavailable, you can build the submodule"
 
-}
-
-motr_pkgs_url='https://github.com/Seagate/cortx-motr/releases/download/2.0.0-rgw'
-
-function install_cortx_motr_on_ubuntu {
-    if dpkg -l cortx-motr-dev &> /dev/null; then
-        return
-    fi
-    if [ "$(lsb_release -sc)" = "jammy" ]; then
-      install_pkg_on_ubuntu \
-        cortx-motr \
-        39f89fa1c6945040433a913f2687c4b4e6cbeb3f \
-        jammy \
-        check \
-        cortx-motr \
-        cortx-motr-dev
-    else
-        local deb_arch=$(dpkg --print-architecture)
-        local motr_pkg="cortx-motr_2.0.0.git3252d623_$deb_arch.deb"
-        local motr_dev_pkg="cortx-motr-dev_2.0.0.git3252d623_$deb_arch.deb"
-        $SUDO curl -sL -o/var/cache/apt/archives/$motr_pkg $motr_pkgs_url/$motr_pkg
-        $SUDO curl -sL -o/var/cache/apt/archives/$motr_dev_pkg $motr_pkgs_url/$motr_dev_pkg
-        # For some reason libfabric pkg is not available in arm64 version
-        # of Ubuntu 20.04 (Focal Fossa), so we borrow it from more recent
-        # versions for now.
-        if [[ "$deb_arch" == 'arm64' ]]; then
-            local lf_pkg='libfabric1_1.11.0-2_arm64.deb'
-            $SUDO curl -sL -o/var/cache/apt/archives/$lf_pkg http://ports.ubuntu.com/pool/universe/libf/libfabric/$lf_pkg
-            $SUDO apt-get install -y /var/cache/apt/archives/$lf_pkg
-        fi
-        $SUDO apt-get install -y /var/cache/apt/archives/{$motr_pkg,$motr_dev_pkg}
-        $SUDO apt-get install -y libisal-dev
-    fi
 }
 
 function version_lt {
@@ -402,15 +370,10 @@ if [ x$(uname)x = xFreeBSDx ]; then
         security/oath-toolkit \
         sysutils/flock \
         sysutils/fusefs-libs \
-
-        # Now use pip to install some extra python modules
-        pip install pecan
-
     exit
 else
-    [ $WITH_SEASTAR ] && with_seastar=true || with_seastar=false
+    [ $WITH_CRIMSON ] && with_crimson=true || with_crimson=false
     [ $WITH_PMEM ] && with_pmem=true || with_pmem=false
-    [ $WITH_RADOSGW_MOTR ] && with_rgw_motr=true || with_rgw_motr=false
     source /etc/os-release
     case "$ID" in
     debian|ubuntu|devuan|elementary|softiron)
@@ -472,7 +435,7 @@ else
         if $for_make_check; then
             build_profiles+=",pkg.ceph.check"
         fi
-        if $with_seastar; then
+        if $with_crimson; then
             build_profiles+=",pkg.ceph.crimson"
         fi
         if $with_pmem; then
@@ -480,7 +443,7 @@ else
         fi
 
         ci_debug "for_make_check=$for_make_check"
-        ci_debug "with_seastar=$with_seastar"
+        ci_debug "with_crimson=$with_crimson"
         ci_debug "with_jaeger=$with_jaeger"
         ci_debug "build_profiles=$build_profiles"
         ci_debug "Now running 'mk-build-deps' and installing ceph-build-deps package"
@@ -492,11 +455,6 @@ else
         ci_debug "Removing ceph-build-deps"
         $SUDO env DEBIAN_FRONTEND=noninteractive apt-get -y remove ceph-build-deps
         if [ "$control" != "debian/control" ] ; then rm $control; fi
-
-        # for rgw motr backend build checks
-        if $with_rgw_motr; then
-            install_cortx_motr_on_ubuntu
-        fi
         ;;
     almalinux|rocky|centos|fedora|rhel|ol|virtuozzo)
         builddepcmd="dnf -y builddep --allowerasing"
@@ -527,6 +485,8 @@ else
                     $SUDO dnf -y module enable javapackages-tools
                 elif test $ID = centos -a $MAJOR_VERSION = 9 ; then
                     $SUDO dnf config-manager --set-enabled crb
+                elif test $ID = centos -a $MAJOR_VERSION = 10 ; then
+                    $SUDO dnf config-manager --set-enabled crb
                 elif test $ID = rhel -a $MAJOR_VERSION = 8 ; then
                     dts_ver=11
                     $SUDO dnf config-manager --set-enabled "codeready-builder-for-rhel-8-${ARCH}-rpms"
@@ -542,7 +502,7 @@ else
         if [ "$INSTALL_EXTRA_PACKAGES" ]; then
             $SUDO dnf install -y $INSTALL_EXTRA_PACKAGES
         fi
-        munge_ceph_spec_in $with_seastar $for_make_check $DIR/ceph.spec
+        munge_ceph_spec_in $with_crimson $for_make_check $DIR/ceph.spec
         # for python3_pkgversion macro defined by python-srpm-macros, which is required by python3-devel
         $SUDO dnf install -y python3-devel
         $SUDO $builddepcmd $DIR/ceph.spec 2>&1 | tee $DIR/yum-builddep.out
@@ -552,14 +512,6 @@ else
         fi
         IGNORE_YUM_BUILDEP_ERRORS="ValueError: SELinux policy is not managed or store cannot be accessed."
         sed "/$IGNORE_YUM_BUILDEP_ERRORS/d" $DIR/yum-builddep.out | grep -i "error:" && exit 1
-        # for rgw motr backend build checks
-        if ! rpm --quiet -q cortx-motr-devel &&
-              { [[ $FOR_MAKE_CHECK ]] || $with_rgw_motr; }; then
-            $SUDO dnf install -y \
-                  "$motr_pkgs_url/isa-l-2.30.0-1.el7.${ARCH}.rpm" \
-                  "$motr_pkgs_url/cortx-motr-2.0.0-1_git3252d623_any.el8.${ARCH}.rpm" \
-                  "$motr_pkgs_url/cortx-motr-devel-2.0.0-1_git3252d623_any.el8.${ARCH}.rpm"
-        fi
         ;;
     opensuse*|suse|sles)
         echo "Using zypper to install dependencies"
@@ -568,7 +520,7 @@ else
         if [ "$INSTALL_EXTRA_PACKAGES" ]; then
             $SUDO $zypp_install $INSTALL_EXTRA_PACKAGES
         fi
-        munge_ceph_spec_in $with_seastar false $for_make_check $DIR/ceph.spec
+        munge_ceph_spec_in $with_crimson $for_make_check $DIR/ceph.spec
         $SUDO $zypp_install $(rpmspec -q --buildrequires $DIR/ceph.spec) || exit 1
         ;;
     *)

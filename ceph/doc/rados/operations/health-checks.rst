@@ -1123,6 +1123,13 @@ the object data, there might exist failing disks that are not registering any
 scrub errors. This repair count is maintained as a way of identifying any such
 failing disks.
 
+In order to allow clearing of the warning, a new command
+``ceph tell osd.# clear_shards_repaired [count]`` has been added.
+By default it will set the repair count to 0. A `count` value can be passed 
+to the command. Thus, the administrator has the option to re-enable the warning
+by passing the value of ``mon_osd_warn_num_repaired`` (or above) to the command.
+An alternative to using `clear_shards_repaired` is to mute the
+`OSD_TOO_MANY_REPAIRS` alert with `ceph health mute`.
 
 LARGE_OMAP_OBJECTS
 __________________
@@ -1690,6 +1697,14 @@ Some of the gateways are in the GW_UNAVAILABLE state. If a NVMeoF daemon has
 crashed, the daemon log file (found at ``/var/log/ceph/``) may contain
 troubleshooting information.
 
+NVMEOF_GATEWAY_DELETING
+_______________________
+
+Some of the gateways are in the GW_DELETING state. They will stay in this
+state until all the namespaces under the gateway's load balancing group are 
+moved to another load balancing group ID. This is done automatically by the 
+load balancing process. If this alert persist for a long time, there might 
+be an issue with that process.
 
 Miscellaneous
 -------------

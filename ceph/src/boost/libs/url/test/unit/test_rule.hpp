@@ -26,20 +26,17 @@ template<class F>
 void
 for_each_char(F const& f)
 {
-    unsigned char u = 0;
-    do
+    for (int i = 0; i < 256; ++i)
     {
-        f(static_cast<
-            char>(u));
+        f(static_cast<char>(i));
     }
-    while(++u != 0);
 }
 
 template<class CharSet>
 void
 test_char_set(
     CharSet const& cs,
-    string_view s) noexcept
+    core::string_view s) noexcept
 {
     // each char in s is in the set.
     for(char c : s)
@@ -60,7 +57,7 @@ test_char_set(
     for_each_char(
     [&cs](char c)
     {
-        if(cs(0) || ! cs(c))
+        if(cs(static_cast<unsigned char>(0)) || ! cs(c))
         {
             if(cs(c))
             {
@@ -104,7 +101,7 @@ template<class R>
 typename std::enable_if<
     grammar::is_rule<R>::value>::type
 ok( R const& r,
-    string_view s)
+    core::string_view s)
 {
     BOOST_TEST(grammar::parse(s, r).has_value());
 }
@@ -114,7 +111,7 @@ template<class R, class V>
 typename std::enable_if<
     grammar::is_rule<R>::value>::type
 ok( R const& r,
-    string_view s,
+    core::string_view s,
     V const& v)
 {
     auto rv = grammar::parse(s, r);
@@ -128,7 +125,7 @@ typename std::enable_if<
     grammar::is_rule<R>::value>::type
 bad(
     R const& r,
-    string_view s)
+    core::string_view s)
 {
     BOOST_TEST(grammar::parse(s, r).has_error());
 }
@@ -139,8 +136,8 @@ typename std::enable_if<
     grammar::is_rule<R>::value>::type
 bad(
     R const& r,
-    string_view s,
-    error_code const& e)
+    core::string_view s,
+    system::error_code const& e)
 {
     auto rv = grammar::parse(s, r);
     if(BOOST_TEST(rv.has_error()))

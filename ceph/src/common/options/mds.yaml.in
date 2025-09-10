@@ -623,7 +623,8 @@ options:
   default: true
   services:
   - mds
-  with_legacy: true
+  flags:
+  - runtime
 - name: mds_export_ephemeral_random
   type: bool
   level: advanced
@@ -680,7 +681,8 @@ options:
   default: 3
   services:
   - mds
-  with_legacy: true
+  flags:
+  - runtime
 - name: mds_bal_replicate_threshold
   type: float
   level: advanced
@@ -690,7 +692,8 @@ options:
   default: 8000
   services:
   - mds
-  with_legacy: true
+  flags:
+  - runtime
 - name: mds_bal_unreplicate_threshold
   type: float
   level: advanced
@@ -700,7 +703,8 @@ options:
   default: 0
   services:
   - mds
-  with_legacy: true
+  flags:
+  - runtime
 - name: mds_bal_split_size
   type: int
   level: advanced
@@ -710,7 +714,8 @@ options:
   default: 10000
   services:
   - mds
-  with_legacy: true
+  flags:
+  - runtime
 - name: mds_bal_split_rd
   type: float
   level: advanced
@@ -720,7 +725,8 @@ options:
   default: 25000
   services:
   - mds
-  with_legacy: true
+  flags:
+  - runtime
 - name: mds_bal_split_wr
   type: float
   level: advanced
@@ -730,7 +736,8 @@ options:
   default: 10000
   services:
   - mds
-  with_legacy: true
+  flags:
+  - runtime
 - name: mds_bal_split_bits
   type: int
   level: advanced
@@ -739,9 +746,10 @@ options:
   default: 3
   services:
   - mds
+  flags:
+  - runtime
   min: 1
   max: 24
-  with_legacy: true
 - name: mds_bal_merge_size
   type: int
   level: advanced
@@ -751,7 +759,8 @@ options:
   default: 50
   services:
   - mds
-  with_legacy: true
+  flags:
+  - runtime
 - name: mds_bal_interval
   type: int
   level: advanced
@@ -760,6 +769,8 @@ options:
   default: 10
   services:
   - mds
+  flags:
+  - runtime
 - name: mds_bal_fragment_interval
   type: int
   level: advanced
@@ -769,6 +780,8 @@ options:
   default: 5
   services:
   - mds
+  flags:
+  - runtime
 # order of magnitude higher than split size
 - name: mds_bal_fragment_size_max
   type: int
@@ -780,6 +793,21 @@ options:
   services:
   - mds
   with_legacy: true
+- name: mds_allow_batched_ops
+  type: bool
+  level: advanced
+  desc: allow MDS to batch lookup/getattr RPCs
+  long_desc: >
+    The MDS will batch a lookup or getattr RPC on the same inode when
+    possible to avoid repetitive locks on metadata and to bypass other
+    requests acquiring write locks. Generally, this should only
+    improve performance but this switch exists to provide a means to
+    turn this behavior off for comparison.
+  default: true
+  services:
+  - mds
+  flags:
+  - runtime
 # multiple of size_max that triggers immediate split
 - name: mds_bal_fragment_fast_factor
   type: float
@@ -790,7 +818,8 @@ options:
   default: 1.5
   services:
   - mds
-  with_legacy: true
+  flags:
+  - runtime
 - name: mds_bal_fragment_dirs
   type: bool
   level: advanced
@@ -803,6 +832,8 @@ options:
   default: true
   services:
   - mds
+  flags:
+  - runtime
 - name: mds_bal_idle_threshold
   type: float
   level: advanced
@@ -812,7 +843,8 @@ options:
   default: 0
   services:
   - mds
-  with_legacy: true
+  flags:
+  - runtime
 - name: mds_bal_max
   type: int
   level: dev
@@ -821,7 +853,8 @@ options:
   - mds
   fmt_desc: The number of iterations to run balancer before Ceph stops.
     (used for testing purposes only)
-  with_legacy: true
+  flags:
+  - runtime
 - name: mds_bal_max_until
   type: int
   level: dev
@@ -830,7 +863,8 @@ options:
   - mds
   fmt_desc: The number of seconds to run balancer before Ceph stops.
     (used for testing purposes only)
-  with_legacy: true
+  flags:
+  - runtime
 - name: mds_bal_mode
   type: int
   level: dev
@@ -843,7 +877,8 @@ options:
       - ``0`` = Hybrid.
       - ``1`` = Request rate and latency.
       - ``2`` = CPU load.
-  with_legacy: true
+  flags:
+  - runtime
 # must be this much above average before we export anything
 - name: mds_bal_min_rebalance
   type: float
@@ -853,7 +888,8 @@ options:
   default: 0.1
   services:
   - mds
-  with_legacy: true
+  flags:
+  - runtime
 # must be overloaded for more than these epochs before we export anything
 - name: mds_bal_overload_epochs
   type: int
@@ -872,7 +908,8 @@ options:
   services:
   - mds
   fmt_desc: The minimum subtree temperature before Ceph searches a subtree.
-  with_legacy: true
+  flags:
+  - runtime
 # take within this range of what we need
 - name: mds_bal_need_min
   type: float
@@ -881,7 +918,8 @@ options:
   services:
   - mds
   fmt_desc: The minimum fraction of target subtree size to accept.
-  with_legacy: true
+  flags:
+  - runtime
 - name: mds_bal_need_max
   type: float
   level: dev
@@ -889,7 +927,8 @@ options:
   services:
   - mds
   fmt_desc: The maximum fraction of target subtree size to accept.
-  with_legacy: true
+  flags:
+  - runtime
 # any sub bigger than this taken in full
 - name: mds_bal_midchunk
   type: float
@@ -899,7 +938,8 @@ options:
   - mds
   fmt_desc: Ceph will migrate any subtree that is larger than this fraction
     of the target subtree size.
-  with_legacy: true
+  flags:
+  - runtime
 # never take anything smaller than this
 - name: mds_bal_minchunk
   type: float
@@ -909,7 +949,8 @@ options:
   - mds
   fmt_desc: Ceph will ignore any subtree that is smaller than this fraction
     of the target subtree size.
-  with_legacy: true
+  flags:
+  - runtime
 # target decay half-life in MDSMap (2x larger is approx. 2x slower)
 - name: mds_bal_target_decay
   type: float
@@ -918,7 +959,8 @@ options:
   default: 10
   services:
   - mds
-  with_legacy: true
+  flags:
+  - runtime
 - name: mds_oft_prefetch_dirfrags
   type: bool
   level: advanced
@@ -1104,6 +1146,14 @@ options:
   fmt_desc: Ceph will inject MDS failure in the subtree import code
     (for developers only).
   with_legacy: true
+- name: mds_kill_dirfrag_at
+  type: int
+  level: dev
+  default: 0
+  services:
+  - mds
+  flags:
+  - runtime
 - name: mds_kill_link_at
   type: int
   level: dev
@@ -1629,6 +1679,17 @@ options:
   - mds
   flags:
   - runtime
+- name: mds_scrub_stats_review_period
+  type: uint
+  level: advanced
+  desc: Period for which scrub stats will be available for review.
+  long_desc: Number of days for which scrub stats will be available for review since
+    start of scrub operation. After this period, the stats will be auto purged.
+    These stats will not be saved to the disk. So any restart or failover of mds
+    will cause stats to be lost forever.
+  default: 1
+  min: 1
+  max: 60
 - name: mds_session_metadata_threshold
   type: size
   level: advanced
@@ -1675,6 +1736,28 @@ options:
   default: 1000
   services:
   - mds
+- name: mds_delay_journal_replay_for_testing
+  type: millisecs
+  level: dev
+  desc: Delay the journal replay to verify the replay time estimate
+  long_desc: Jorunal replay warning is activated if the mds has been in replay state for more than 30 seconds. This config delays replay for validating the replay warning in tests.
+  default: 0
+  flags:
+  - runtime
+- name: mds_server_dispatch_killpoint_random
+  type: float
+  level: dev
+  default: 0.0
+  services:
+  - mds
+  flags:
+  - runtime
+- name: mds_server_dispatch_client_request_delay
+  type: millisecs
+  level: dev
+  default: 0
+  services:
+  - mds
   flags:
   - runtime
 - name: mds_log_minor_segments_per_major_segment
@@ -1685,7 +1768,7 @@ options:
   default: 16
   services:
   - mds
-  min: 8
+  min: 4
 - name: mds_file_blockdiff_max_concurrent_object_scans
   type: uint
   level: advanced

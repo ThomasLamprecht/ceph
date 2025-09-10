@@ -8,14 +8,23 @@ Branch | Windows/Linux Build | OSX build | Coverage | Documentation
 Boost.MySQL is a C++11 client for MySQL and MariaDB database servers, based on Boost.Asio.
 Boost.MySQL is part of Boost.
 
-Boost.MySQL gets its first stable release with Boost 1.82 on the 12th of April, 2023.
+## Breaking changes in Boost 1.85
+
+Boost.MySQL now requires linking with Boost.Charconv, which is a compiled library.
+If you're getting link errors, link your executable to the `Boost::charconv` CMake target.
+No C++ code changes are required.
+
+## Feedback
+
+Do you have any suggestion? Would you like to share a bad or good experience while using the library?
+Please comment [on this issue](https://github.com/boostorg/mysql/issues/140).
 
 ## Why another MySQL C++ client?
 
 - It is fully compatible with Boost.Asio and integrates well with any other
   library in the Boost.Asio ecosystem (like Boost.Beast).
 - It supports Boost.Asio's universal asynchronous model, which means you can
-  go asyncrhonous using callbacks, futures or coroutines (including C++20 coroutines).
+  go asynchronous using callbacks, futures or coroutines (including C++20 coroutines).
 - It is written in C++11 and takes advantage of it.
 - It is header only.
 
@@ -23,8 +32,8 @@ Boost.MySQL gets its first stable release with Boost 1.82 on the 12th of April, 
 
 To use this library, you need:
 
-- A C++11 capable compiler.
 - Boost 1.82 or higher (Boost.MySQL doesn't work with standalone Asio).
+- A C++11 capable compiler.
 - OpenSSL.
 
 The library is header-only, but it depends on other Boost header-only libraries and on OpenSSL.
@@ -34,47 +43,41 @@ a `CMakeLists.txt` like this (replace `main` by your executable name and `main.c
 ```cmake
 project(boost_mysql_example LANGUAGES CXX)
 
-find_package(Boost REQUIRED COMPONENTS headers)
+find_package(Boost REQUIRED COMPONENTS charconv)
 find_package(Threads REQUIRED)
 find_package(OpenSSL REQUIRED)
 
 add_executable(main main.cpp)
-target_link_libraries(main PRIVATE Boost::headers Threads::Threads OpenSSL::Crypto OpenSSL::SSL)
+target_link_libraries(main PRIVATE Boost::charconv Threads::Threads OpenSSL::Crypto OpenSSL::SSL)
 ```
 
 ## Tested with
 
 Boost.MySQL has been tested with the following compilers:
-- gcc 5 to 11.
-- clang 3.6 to 14.
+
+- gcc 5 to 14.
+- clang 3.6 to 18.
 - msvc 14.1, 14.2 and 14.3.
 
 And with the following databases:
+
 - MySQL v5.7.41.
-- MySQL v8.0.31.
-- MariaDB v10.11.2.
-
-## Upgrading from 0.2.x
-
-If you were using 0.2.x, you can find [upgrade instructions here](doc/upgrade_1_82.md). 
+- MySQL v8.4.1.
+- MariaDB v11.4.2.
 
 ## Features
 
-Currently implemented:
 - Text queries (execution of text SQL queries and data retrieval).
   MySQL refers to this as the "text protocol", as all information is passed using text
   (as opposed to prepared statements, see below).
 - Prepared statements. MySQL refers to this as the "binary protocol", as the result
   of executing a prepared statement is sent in binary format rather than in text.
+- Stored procedures.
 - Authentication methods (authentication plugins): mysql_native_password and
   caching_sha2_password. These are the default methods in MySQL 5 and MySQL 8,
   respectively.
 - Encrypted connections (TLS).
-- TCP and UNIX socket connections. The implementation is based on Boost.Asio
-  SyncStream and AsyncStream concepts, so it is generic and can be used with
-  any stream that fulfills these concept's requirements. There are user-friendly
-  typedefs and regression tests for TCP and UNIX socket streams.
-
-Yet to be done (but it is on our list - PRs welcome):
-- Further authentication methods: sha256_password
-- Multi-resultset: being able to specify several semicolon-separated queries.
+- TCP and UNIX socket transports.
+- Connection pools.
+- Friendly client-side generated SQL.
+- (Experimental) pipelines.

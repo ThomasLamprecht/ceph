@@ -25,6 +25,7 @@
 #include <boost/intrusive/list.hpp>
 #endif
 #include <seastar/net/api.hh>
+#include <seastar/http/connection_factory.hh>
 #include <seastar/http/reply.hh>
 #include <seastar/core/condition-variable.hh>
 #include <seastar/core/iostream.hh>
@@ -132,26 +133,8 @@ private:
     future<reply_ptr> maybe_wait_for_continue(const request& req);
     future<> write_body(const request& rq);
     future<reply_ptr> recv_reply();
-};
 
-/**
- * \brief Factory that provides transport for \ref client
- *
- * This customization point allows callers provide its own transport for client. The
- * client code calls factory when it needs more connections to the server and maintains
- * the pool of re-usable sockets internally
- */
-
-class connection_factory {
-public:
-    /**
-     * \brief Make a \ref connected_socket
-     *
-     * The implementations of this method should return ready-to-use socket that will
-     * be used by \ref client as transport for its http connections
-     */
-    virtual future<connected_socket> make() = 0;
-    virtual ~connection_factory() {}
+    void shutdown() noexcept;
 };
 
 /**
@@ -185,19 +168,20 @@ private:
 
     using connection_ptr = seastar::shared_ptr<connection>;
 
-    future<connection_ptr> get_connection();
-    future<connection_ptr> make_connection();
+    future<connection_ptr> get_connection(abort_source* as);
+    future<connection_ptr> make_connection(abort_source* as);
     future<> put_connection(connection_ptr con);
     future<> shrink_connections();
 
     template <std::invocable<connection&> Fn>
-    auto with_connection(Fn&& fn);
+    auto with_connection(Fn&& fn, abort_source*);
 
     template <typename Fn>
     requires std::invocable<Fn, connection&>
-    auto with_new_connection(Fn&& fn);
+    auto with_new_connection(Fn&& fn, abort_source*);
 
-    future<> do_make_request(connection& con, request& req, reply_handler& handle, std::optional<reply::status_type> expected);
+    future<> do_make_request(request& req, reply_handler& handle, abort_source*, std::optional<reply::status_type> expected);
+    future<> do_make_request(connection& con, request& req, reply_handler& handle, abort_source*, std::optional<reply::status_type> expected);
 
 public:
     /**
@@ -280,7 +264,37 @@ public:
      * client may restart the whole request processing in case server closes the connection
      * in the middle of operation
      */
-    future<> make_request(request req, reply_handler handle, std::optional<reply::status_type> expected = std::nullopt);
+    future<> make_request(request&& req, reply_handler&& handle, std::optional<reply::status_type>&& expected = std::nullopt);
+
+    /**
+     * \brief Send the request and handle the response (abortable)
+     *
+     * Same as previous method, but aborts the request upon as.request_abort() call
+     *
+     * \param req -- request to be sent
+     * \param handle -- the response handler
+     * \param as -- abort source that aborts the request
+     * \param expected -- the optional expected reply status code, default is std::nullopt
+     */
+    future<> make_request(request&& req, reply_handler&& handle, abort_source& as, std::optional<reply::status_type>&& expected = std::nullopt);
+
+    /**
+     * \brief Send the request and handle the response, same as \ref make_request()
+     *
+     *  @attention Note that the method does not take the ownership of the
+     * `request and the `handle`, it caller's responsibility the make sure they
+     * are referencing valid instances
+     */
+    future<> make_request(request& req, reply_handler& handle, std::optional<reply::status_type> expected = std::nullopt);
+
+    /**
+     * \brief Send the request and handle the response (abortable), same as \ref make_request()
+     *
+     *  @attention Note that the method does not take the ownership of the
+     * `request and the `handle`, it caller's responsibility the make sure they
+     * are referencing valid instances
+     */
+    future<> make_request(request& req, reply_handler& handle, abort_source& as, std::optional<reply::status_type> expected = std::nullopt);
 
     /**
      * \brief Updates the maximum number of connections a client may have

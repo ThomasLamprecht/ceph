@@ -213,7 +213,7 @@ For example
           of ``--tier-type=cloud-s3`` or ``--tier-type=cloud-s3-glacier``
           is created it cannot be later modified to any other storage class type.
 
-The tier configuration can be then performed using the following command::
+The tier configuration can be then performed using the following command:
 
 .. prompt:: bash #
 
@@ -225,7 +225,7 @@ The tier configuration can be then performed using the following command::
 The ``key`` in the configuration specifies the config variable to be updated, and
 the ``val`` specifies its new value.
 
-For example::
+For example:
 
 .. prompt:: bash #
 
@@ -242,7 +242,7 @@ Nested tier configuration values can be accessed using periods. This notation
 works similarly to how nested fields are accessed in JSON with tools like ``jq``.
 Note that the use of period separators ``(.)`` is specific to key access within ``--tier-config``,
 and should not be confused with Ceph RGW patterns for realm/zonegroup/zone. 
-For example::
+For example:
 
 .. prompt:: bash #
 
@@ -255,7 +255,7 @@ For example::
 Configuration array entries can be accessed by specifying the specific entry to
 be referenced enclosed in square brackets, and adding a new array entry can be
 performed with an empty array `[]`.
-For example, creating a new ``acl`` array entry::
+For example, creating a new ``acl`` array entry:
 
 .. prompt:: bash #
 
@@ -268,7 +268,7 @@ For example, creating a new ``acl`` array entry::
 
 An entry can be removed by supplying ``--tier-config-rm={key}``.
 
-For example::
+For example:
 
 .. prompt:: bash #
 
@@ -276,13 +276,12 @@ For example::
                                               --placement-id default-placement \
                                               --storage-class CLOUDTIER \
                                               --tier-config-rm=acls.source_id=testid
-
    radosgw-admin zonegroup placement modify --rgw-zonegroup default \
                                               --placement-id default-placement \
                                               --storage-class CLOUDTIER \
                                               --tier-config-rm=target_path
 
-The storage class can be removed using the following command::
+The storage class can be removed using the following command:
 
 .. prompt:: bash #
 
@@ -313,10 +312,6 @@ For example:
       }
   ]
 
-
-   radosgw-admin zonegroup placement rm --rgw-zonegroup default \
-                                          --placement-id default-placement \
-                                          --storage-class CLOUDTIER
 
 Object Modification and Limitations
 -----------------------------------
@@ -373,7 +368,7 @@ with an ``InvalidObjectState`` error. Any other operations against original
 source objects will be for its metadata entries only keeping transitioned
 objects intact.
 
-For example::
+For example:
 
 .. prompt:: bash $
 
@@ -423,18 +418,14 @@ For versioned and locked objects, similar semantics as that of LifecycleExpirati
 
 Restoring Objects
 -----------------
-The objects transitioned to cloud can now be restored. For more information, refer to 
-`Restoring Objects from Cloud <https://docs.aws.amazon.com/AmazonS3/latest/dev/cloud-restore.html>`_.
+The objects transitioned to cloud can now be restored. For more information, refer to
+`Restoring Objects from Cloud <https://docs.ceph.com/en/latest/radosgw/cloud-restore/>`_.
 
 
 Future Work
 -----------
 
 * Send presigned redirect or read-through the objects transitioned to cloud.
-
-* Support ``s3:RestoreObject`` operation on cloud transitioned objects.
-
-* Federation between RGW and Cloud services.
 
 * Support transition to other cloud providers (like Azure).
 

@@ -12,21 +12,25 @@
  * 
  */
 
+#include "Beacon.h"
+#include "BatchOp.h"
+#include "Server.h"
 
-#include "common/dout.h"
+#include "common/debug.h"
 #include "common/likely.h"
 #include "common/HeartbeatMap.h"
 
+#include "include/compat.h" // for ceph_pthread_setname()
 #include "include/stringify.h"
 #include "include/util.h"
 
 #include "mon/MonClient.h"
+#include "mds/MDCache.h"
 #include "mds/MDLog.h"
 #include "mds/MDSRank.h"
-#include "mds/MDSMap.h"
 #include "mds/Locker.h"
-
-#include "Beacon.h"
+#include "mds/mdstypes.h"
+#include "osdc/Objecter.h"
 
 #include <chrono>
 
@@ -547,6 +551,19 @@ void Beacon::notify_health(MDSRank const *mds)
 	m.metadata["client_count"] = stringify(laggy_clients.size());
 	health.metrics.push_back(std::move(m));
       }
+    }
+  }
+  if (mds->is_replay()) {
+    CachedStackStringStream css;
+    auto estimate = mds->mdlog->get_estimated_replay_finish_time();
+    // this probably should be configurable, however, its fine to report
+    // if replay is running for more than 30 seconds.
+    if (estimate.elapsed_time > std::chrono::seconds(30)) {
+      *css << "replay: " << estimate.percent_complete << "% complete - elapsed time: "
+	   << estimate.elapsed_time << ", estimated time remaining: "
+	   << estimate.estimated_time;
+      MDSHealthMetric m(MDS_HEALTH_ESTIMATED_REPLAY_TIME, HEALTH_WARN, css->strv());
+      health.metrics.push_back(m);
     }
   }
 }

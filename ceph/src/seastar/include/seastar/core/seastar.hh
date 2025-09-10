@@ -359,6 +359,21 @@ using follow_symlink = bool_class<follow_symlink_tag>;
 /// with follow_symlink::yes, or for the link itself, with follow_symlink::no.
 future<stat_data> file_stat(std::string_view name, follow_symlink fs = follow_symlink::yes) noexcept;
 
+/// Wrapper around getgrnam_r.
+/// If the provided group name does not exist in the group database, this call will return an empty optional.
+/// If the provided group name exists in the group database, the optional returned will contain the struct group_details information.
+/// When an unexpected error is thrown by the getgrnam_r libc call, this function throws std::system_error with std::error_code.
+/// \param groupname name of the group
+///
+/// \return optional struct group_details of the group identified by name. struct group_details has details of the group from the group database.
+future<std::optional<struct group_details>> getgrnam(std::string_view name);
+
+/// Change the owner and group of file. This is a wrapper around chown syscall.
+/// The function throws std::system_error, when the chown syscall fails.
+/// \param filepath
+/// \param owner
+/// \param group
+future<> chown(std::string_view filepath, uid_t owner, gid_t group);
 /// Return the size of a file.
 ///
 /// \param name name of the file to return the size
@@ -429,6 +444,11 @@ future<uint64_t> fs_avail(std::string_view name) noexcept;
 /// \param name name of the file to inspect
 future<uint64_t> fs_free(std::string_view name) noexcept;
 /// @}
+
+/// Return filesystem-wide space_info where a file is located.
+///
+/// \param name name of the file in the filesystem to inspect
+future<std::filesystem::space_info> file_system_space(std::string_view name) noexcept;
 
 namespace experimental {
 /// \defgroup interprocess-module Interprocess Communication

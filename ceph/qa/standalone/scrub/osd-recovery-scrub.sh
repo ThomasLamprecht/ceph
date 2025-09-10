@@ -99,11 +99,11 @@ function TEST_recovery_scrub_1() {
     kill_daemons $dir #|| return 1
 
     declare -a err_strings
-    err_strings[0]="recovery in progress. Only high priority scrubs allowed."
+    err_strings[0]="recovery in progress.*scrubs"
 
     for osd in $(seq 0 $(expr $OSDS - 1))
     do
-        grep "recovery in progress. Only high priority scrubs allowed." $dir/osd.${osd}.log
+        grep "recovery in progress.*scrubs" $dir/osd.${osd}.log
     done
     for err_string in "${err_strings[@]}"
     do
@@ -163,7 +163,7 @@ function wait_for_scrub_mod() {
         fi
         sleep 1
         # are we still the primary?
-        local current_primary=`bin/ceph pg $pgid query | jq '.acting[0]' `
+        local current_primary=`./bin/ceph pg $pgid query | jq '.acting[0]' `
         if [ $orig_primary != $current_primary ]; then
             echo $orig_primary no longer primary for $pgid
             return 0
@@ -187,9 +187,14 @@ function wait_for_scrub_mod() {
 #
 function pg_scrub_mod() {
     local pgid=$1
+    # wait for 'clean' state of the PG. Operator scrub commands are rejected
+    # *and not remembered* if the PG is not clean
+    wait_for_pg_clean $pgid
+    wait_for_pg_clean $pgid || return 1
+
     local last_scrub=$(get_last_scrub_stamp $pgid)
     # locate the primary
-    local my_primary=`bin/ceph pg $pgid query | jq '.acting[0]' `
+    local my_primary=`./bin/ceph pg $pgid query | jq '.acting[0]' `
     local recovery=false
     ceph pg scrub $pgid
     #ceph --format json pg dump pgs | jq ".pg_stats | .[] | select(.pgid == \"$pgid\") | .state"

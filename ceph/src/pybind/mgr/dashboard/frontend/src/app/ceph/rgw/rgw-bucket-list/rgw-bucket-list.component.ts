@@ -14,14 +14,17 @@ import { CdTableAction } from '~/app/shared/models/cd-table-action';
 import { CdTableColumn } from '~/app/shared/models/cd-table-column';
 import { CdTableFetchDataContext } from '~/app/shared/models/cd-table-fetch-data-context';
 import { CdTableSelection } from '~/app/shared/models/cd-table-selection';
+import { FinishedTask } from '~/app/shared/models/finished-task';
 import { Permission } from '~/app/shared/models/permissions';
 import { DimlessBinaryPipe } from '~/app/shared/pipes/dimless-binary.pipe';
 import { DimlessPipe } from '~/app/shared/pipes/dimless.pipe';
 import { AuthStorageService } from '~/app/shared/services/auth-storage.service';
-import { ModalService } from '~/app/shared/services/modal.service';
+import { ModalCdsService } from '~/app/shared/services/modal-cds.service';
+import { TaskWrapperService } from '~/app/shared/services/task-wrapper.service';
 import { URLBuilderService } from '~/app/shared/services/url-builder.service';
 import { Bucket } from '../models/rgw-bucket';
 import { DeletionImpact } from '~/app/shared/enum/delete-confirmation-modal-impact.enum';
+import { RgwBucketTieringFormComponent } from '../rgw-bucket-tiering-form/rgw-bucket-tiering-form.component';
 
 const BASE_URL = 'rgw/bucket';
 
@@ -38,6 +41,8 @@ export class RgwBucketListComponent extends ListWithDetails implements OnInit, O
   bucketSizeTpl: TemplateRef<any>;
   @ViewChild('bucketObjectTpl', { static: true })
   bucketObjectTpl: TemplateRef<any>;
+  @ViewChild('deleteTpl', { static: true })
+  deleteTpl: TemplateRef<any>;
 
   permission: Permission;
   tableActions: CdTableAction[];
@@ -52,10 +57,11 @@ export class RgwBucketListComponent extends ListWithDetails implements OnInit, O
     private dimlessBinaryPipe: DimlessBinaryPipe,
     private dimlessPipe: DimlessPipe,
     private rgwBucketService: RgwBucketService,
-    private modalService: ModalService,
+    private modalService: ModalCdsService,
     private urlBuilder: URLBuilderService,
     public actionLabels: ActionLabelsI18n,
-    protected ngZone: NgZone
+    protected ngZone: NgZone,
+    private taskWrapper: TaskWrapperService
   ) {
     super(ngZone);
   }
@@ -96,6 +102,11 @@ export class RgwBucketListComponent extends ListWithDetails implements OnInit, O
         prop: 'object_usage',
         cellTemplate: this.bucketObjectTpl,
         flexGrow: 0.8
+      },
+      {
+        name: $localize`Number of Shards`,
+        prop: 'num_shards',
+        flexGrow: 0.8
       }
     ];
     const getBucketUri = () =>
@@ -116,21 +127,20 @@ export class RgwBucketListComponent extends ListWithDetails implements OnInit, O
     const deleteAction: CdTableAction = {
       permission: 'delete',
       icon: Icons.destroy,
+      title: $localize`Bucket is not empty. Remove all objects before deletion.`,
       click: () => this.deleteAction(),
-      disable: () => this.isDeleteDisabled(),
+      disable: () => this.selection.first()?.num_objects > 0,
       name: this.actionLabels.DELETE
     };
-    this.tableActions = [addAction, editAction, deleteAction];
+    const tieringAction: CdTableAction = {
+      permission: 'update',
+      icon: Icons.edit,
+      click: () => this.openTieringModal(),
+      disable: () => !this.selection.hasSelection,
+      name: this.actionLabels.TIERING
+    };
+    this.tableActions = [addAction, editAction, tieringAction, deleteAction];
     this.setTableRefreshTimeout();
-  }
-
-  isDeleteDisabled(): boolean | string {
-    if (!this.selection.first()) {
-      return true;
-    }
-    return this.selection.first()?.num_objects > 0
-      ? $localize`Bucket is not empty. Remove all objects before deletion.`
-      : false;
   }
 
   getBucketList(context: CdTableFetchDataContext) {
@@ -152,34 +162,47 @@ export class RgwBucketListComponent extends ListWithDetails implements OnInit, O
     this.selection = selection;
   }
 
+  openTieringModal() {
+    this.modalService.show(RgwBucketTieringFormComponent, {
+      bucket: this.selection.first()
+    });
+  }
+
   deleteAction() {
     const itemNames = this.selection.selected.map((bucket: any) => bucket['bid']);
     this.modalService.show(DeleteConfirmationModalComponent, {
       itemDescription: $localize`bucket`,
       impact: DeletionImpact.high,
       itemNames: itemNames,
+      bodyTemplate: this.deleteTpl,
       submitActionObservable: () => {
         return new Observable((observer: Subscriber<any>) => {
-          // Delete all selected data table rows.
-          observableForkJoin(
-            this.selection.selected.map((bucket: any) => {
-              return this.rgwBucketService.delete(bucket.bid);
+          this.taskWrapper
+            .wrapTaskAroundCall({
+              task: new FinishedTask('rgw/bucket/delete', {
+                bucket_names: itemNames
+              }),
+              call: observableForkJoin(
+                this.selection.selected.map((bucket: any) => {
+                  return this.rgwBucketService.delete(bucket.bid);
+                })
+              )
             })
-          ).subscribe({
-            error: (error) => {
-              // Forward the error to the observer.
-              observer.error(error);
-              // Reload the data table content because some deletions might
-              // have been executed successfully in the meanwhile.
-              this.table.refreshBtn();
-            },
-            complete: () => {
-              // Notify the observer that we are done.
-              observer.complete();
-              // Reload the data table content.
-              this.table.refreshBtn();
-            }
-          });
+            .subscribe({
+              error: (error: any) => {
+                // Forward the error to the observer.
+                observer.error(error);
+                // Reload the data table content because some deletions might
+                // have been executed successfully in the meanwhile.
+                this.table.refreshBtn();
+              },
+              complete: () => {
+                // Notify the observer that we are done.
+                observer.complete();
+                // Reload the data table content.
+                this.table.refreshBtn();
+              }
+            });
         });
       }
     });

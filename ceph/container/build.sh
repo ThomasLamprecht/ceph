@@ -153,7 +153,7 @@ eval ${vars}
 fromtag=${CEPH_CONTAINER_FROM_IMAGE##*/}
 # translate : to -
 fromtag=${fromtag/:/-}
-builddate=$(date +%Y%m%d)
+builddate=$(date -u +%Y%m%d)
 local_tag=${fromtag}-${CEPH_CONTAINER_CEPH_REF}-${CEPH_CONTAINER_ARCH}-${builddate}
 
 repopath=${CONTAINER_REPO_HOSTNAME}/${CONTAINER_REPO_ORGANIZATION}/${CONTAINER_REPO}
@@ -174,7 +174,7 @@ if [[ ${CI_CONTAINER} == "true" ]] ; then
     podman tag ${image_id} ${branch_repo_tag}
     podman tag ${image_id} ${sha1_repo_tag}
 
-    if [[ ${FLAVOR} == "crimson" && ${ARCH} == "x86_64" ]] ; then
+    if [[ (${FLAVOR} == "crimson-debug" || ${FLAVOR} == "crimson-release") && ${ARCH} == "x86_64" ]] ; then
         sha1_flavor_repo_tag=${sha1_repo_tag}-${FLAVOR}
         podman tag ${image_id} ${sha1_flavor_repo_tag}
         if [[ -z "${NO_PUSH}" ]] ; then

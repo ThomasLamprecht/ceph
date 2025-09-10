@@ -10,13 +10,16 @@
 #include <unordered_map>
 #include <string>
 #include <vector>
+#include <shared_mutex> // for std::shared_lock
 #include <thread>
 #include <atomic>
 #include <mutex>
 #include <boost/algorithm/string.hpp>
 #include <boost/functional/hash.hpp>
 #include <boost/lockfree/queue.hpp>
+#include "common/Clock.h" // for ceph_clock_now()
 #include "common/dout.h"
+#include "include/utime.h"
 
 #define dout_subsys ceph_subsys_rgw_notification
 
@@ -39,7 +42,7 @@ inline int rd_kafka_err2errno(rd_kafka_resp_err_t err) {
   case RD_KAFKA_RESP_ERR_MSG_SIZE_TOO_LARGE:
     return EMSGSIZE;
   case RD_KAFKA_RESP_ERR__QUEUE_FULL:
-    return ENOBUFS;
+    return ENOBUFS;                                                                                                                                                                                                                           
   default:
     return EIO;
   }
@@ -209,7 +212,7 @@ void message_callback(rd_kafka_t* rk, const rd_kafka_message_t* rkmessage, void*
   const auto result = rkmessage->err;
 
   if (rkmessage->err == 0) {
-      ldout(conn->cct, 20) << "Kafka run: ack received with result=" <<
+      ldout(conn->cct, 20) << "Kafka run: ack received with result=" << 
         rd_kafka_err2str(result) << dendl;
   } else {
     ldout(conn->cct, 1) << "Kafka run: nack received with result="
@@ -283,7 +286,7 @@ bool new_producer(connection_t* conn) {
   // however, testing with librdkafka v1.6.1 did not expire the message in that case. hence, a value of zero is changed to 1ms
   constexpr std::uint64_t min_message_timeout = 1;
   const auto message_timeout = std::max(min_message_timeout, conn->cct->_conf->rgw_kafka_message_timeout);
-  if (rd_kafka_conf_set(conf.get(), "message.timeout.ms",
+  if (rd_kafka_conf_set(conf.get(), "message.timeout.ms", 
         std::to_string(message_timeout).c_str(), errstr, sizeof(errstr)) != RD_KAFKA_CONF_OK) goto conf_error;
 
   // get list of brokers based on the bootstrap broker
@@ -441,7 +444,7 @@ private:
       connection_t::topic_ptr topic(rd_kafka_topic_new(conn->producer, message->topic.c_str(), nullptr));
       if (!topic) {
         const auto err = rd_kafka_last_error();
-        ldout(conn->cct, 1) << "Kafka publish: failed to create topic: " << message->topic << " error: "
+        ldout(conn->cct, 1) << "Kafka publish: failed to create topic: " << message->topic << " error: " 
           << rd_kafka_err2str(err) << "(" << err << ")" << dendl;
         if (message->cb) {
           message->cb(-rd_kafka_err2errno(err));
@@ -529,7 +532,7 @@ private:
 
         // Checking the connection idleness
         if(conn->timestamp.sec() + conn->cct->_conf->rgw_kafka_connection_idle < ceph_clock_now()) {
-          ldout(conn->cct, 20) << "kafka run: deleting a connection that was idle for: " <<
+          ldout(conn->cct, 20) << "kafka run: deleting a connection that was idle for: " << 
             conn->cct->_conf->rgw_kafka_connection_idle << " seconds. last activity was at: " << conn->timestamp << dendl;
           std::lock_guard lock(connections_lock);
           conn->status = STATUS_CONNECTION_IDLE;
@@ -590,14 +593,14 @@ public:
 
   // connect to a broker, or reuse an existing connection if already connected
   bool connect(connection_id_t& conn_id,
-          const std::string& url, 
-          bool use_ssl,
-          bool verify_ssl,
-          boost::optional<const std::string&> ca_location,
-          boost::optional<const std::string&> mechanism,
-          boost::optional<const std::string&> topic_user_name,
-          boost::optional<const std::string&> topic_password,
-          boost::optional<const std::string&> brokers) {
+               const std::string& url,
+               bool use_ssl,
+               bool verify_ssl,
+               boost::optional<const std::string&> ca_location,
+               boost::optional<const std::string&> mechanism,
+               boost::optional<const std::string&> topic_user_name,
+               boost::optional<const std::string&> topic_password,
+               boost::optional<const std::string&> brokers) {
     if (stopped) {
       ldout(cct, 1) << "Kafka connect: manager is stopped" << dendl;
       return false;

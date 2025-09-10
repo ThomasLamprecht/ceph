@@ -1,4 +1,11 @@
-import { Component, Input, ViewChild, OnChanges, SimpleChanges } from '@angular/core';
+import {
+  Component,
+  Input,
+  ViewChild,
+  OnChanges,
+  SimpleChanges,
+  AfterViewInit
+} from '@angular/core';
 
 import { CssHelper } from '~/app/shared/classes/css-helper';
 import { DimlessBinaryPipe } from '~/app/shared/pipes/dimless-binary.pipe';
@@ -14,7 +21,7 @@ import 'chartjs-adapter-moment';
   templateUrl: './dashboard-area-chart.component.html',
   styleUrls: ['./dashboard-area-chart.component.scss']
 })
-export class DashboardAreaChartComponent implements OnChanges {
+export class DashboardAreaChartComponent implements OnChanges, AfterViewInit {
   @ViewChild(BaseChartDirective) chart: BaseChartDirective;
 
   @Input()
@@ -29,6 +36,10 @@ export class DashboardAreaChartComponent implements OnChanges {
   labelsArray?: string[] = []; // Array of chart labels
   @Input()
   decimals?: number = 1;
+  @Input()
+  truncateLabel = false;
+  @Input()
+  isMultiCluster?: boolean = false;
 
   currentDataUnits: string;
   currentData: number;
@@ -40,32 +51,7 @@ export class DashboardAreaChartComponent implements OnChanges {
   options: any = {};
   currentChartData: any = {};
 
-  chartColors: any[] = [
-    [
-      this.cssHelper.propertyValue('chart-color-strong-blue'),
-      this.cssHelper.propertyValue('chart-color-translucent-blue')
-    ],
-    [
-      this.cssHelper.propertyValue('chart-color-orange'),
-      this.cssHelper.propertyValue('chart-color-translucent-orange')
-    ],
-    [
-      this.cssHelper.propertyValue('chart-color-green'),
-      this.cssHelper.propertyValue('chart-color-translucent-green')
-    ],
-    [
-      this.cssHelper.propertyValue('chart-color-cyan'),
-      this.cssHelper.propertyValue('chart-color-translucent-cyan')
-    ],
-    [
-      this.cssHelper.propertyValue('chart-color-purple'),
-      this.cssHelper.propertyValue('chart-color-translucent-purple')
-    ],
-    [
-      this.cssHelper.propertyValue('chart-color-red'),
-      this.cssHelper.propertyValue('chart-color-translucent-red')
-    ]
-  ];
+  chartColors!: any[];
 
   public chartAreaBorderPlugin: any[] = [
     {
@@ -96,6 +82,33 @@ export class DashboardAreaChartComponent implements OnChanges {
     private formatter: FormatterService,
     private numberFormatter: NumberFormatterService
   ) {
+    this.chartColors = [
+      [
+        this.cssHelper.propertyValue('chart-color-strong-blue'),
+        this.cssHelper.propertyValue('chart-color-translucent-blue')
+      ],
+      [
+        this.cssHelper.propertyValue('chart-color-orange'),
+        this.cssHelper.propertyValue('chart-color-translucent-orange')
+      ],
+      [
+        this.cssHelper.propertyValue('chart-color-green'),
+        this.cssHelper.propertyValue('chart-color-translucent-green')
+      ],
+      [
+        this.cssHelper.propertyValue('chart-color-cyan'),
+        this.cssHelper.propertyValue('chart-color-translucent-cyan')
+      ],
+      [
+        this.cssHelper.propertyValue('chart-color-purple'),
+        this.cssHelper.propertyValue('chart-color-translucent-purple')
+      ],
+      [
+        this.cssHelper.propertyValue('chart-color-red'),
+        this.cssHelper.propertyValue('chart-color-translucent-red')
+      ]
+    ];
+
     this.options = {
       plugins: {
         legend: {
@@ -201,8 +214,8 @@ export class DashboardAreaChartComponent implements OnChanges {
       this.currentChartData = this.chartData;
       this.dataArray?.forEach((_data: Array<[number, string]>, index: number) => {
         this.chartData.dataset[index].data = this.formatData(this.dataArray[index]);
-        let currentDataValue = this.dataArray[index][this.dataArray[index].length - 1]
-          ? this.dataArray[index][this.dataArray[index].length - 1][1]
+        let currentDataValue = this.dataArray?.[index]?.[this.dataArray[index]?.length - 1]
+          ? this.dataArray[index][this.dataArray[index]?.length - 1][1]
           : 0;
         if (currentDataValue) {
           [
@@ -212,8 +225,13 @@ export class DashboardAreaChartComponent implements OnChanges {
           [this.maxConvertedValue, this.maxConvertedValueUnits] = this.convertUnits(
             this.maxValue
           ).split(' ');
+          this.currentChartData.dataset[index]['currentDataValue'] = currentDataValue;
         }
       });
+      this.currentChartData.dataset.sort(
+        (a: { currentDataValue: string }, b: { currentDataValue: string }) =>
+          parseFloat(b['currentDataValue']) - parseFloat(a['currentDataValue'])
+      );
     }
 
     if (this.chart) {

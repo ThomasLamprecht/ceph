@@ -53,7 +53,7 @@ public:
 
         // data()
         {
-            string_view s = "x";
+            core::string_view s = "x";
             authority_view a = parse_authority(s).value();
             BOOST_TEST_NE(a.data(), nullptr);
             BOOST_TEST_EQ(a.data(), s.data());
@@ -61,7 +61,7 @@ public:
 
         // string()
         {
-            string_view s = "xyz";
+            core::string_view s = "xyz";
             authority_view a = parse_authority(s).value();
             BOOST_TEST_EQ(a.buffer(), s);
             BOOST_TEST_EQ(a.buffer().data(), s.data());
@@ -72,9 +72,9 @@ public:
     testUserinfo()
     {
         auto const yes =
-            []( string_view s,
-                string_view m1,
-                string_view m2)
+            []( core::string_view s,
+                core::string_view m1,
+                core::string_view m2)
         {
             BOOST_TEST_NO_THROW(
             [&]{
@@ -94,6 +94,14 @@ public:
         yes("%61@x", "%61", "a");
         yes(":%61@x", ":%61", ":a");
         yes("%61%3a%62@x", "%61%3a%62", "a:b");
+
+        // issue 828
+        {
+            auto a = parse_authority("").value();
+            BOOST_TEST_NOT(a.has_userinfo());
+            BOOST_TEST(a.encoded_userinfo() == "");
+            BOOST_TEST(a.userinfo() == "");
+        }
 
         {
             auto a = parse_authority("@").value();
@@ -178,6 +186,9 @@ public:
                 host_type::name);
             BOOST_TEST(a.encoded_host() ==
                 "");
+            BOOST_TEST(a.encoded_host_address() ==
+                "");
+            BOOST_TEST(a.encoded_host_name() == "");
             BOOST_TEST(a.host_ipv4_address()
                 == ipv4_address());
             BOOST_TEST(a.host_ipv6_address()
@@ -191,6 +202,9 @@ public:
                 host_type::name);
             BOOST_TEST(a.encoded_host() ==
                 "");
+            BOOST_TEST(a.encoded_host_address() ==
+                "");
+            BOOST_TEST(a.encoded_host_name() == "");
         }
         {
             auto a = parse_authority("").value();
@@ -198,12 +212,16 @@ public:
                 host_type::name);
             BOOST_TEST(a.encoded_host() ==
                 "");
+            BOOST_TEST(a.encoded_host_address() ==
+                "");
         }
         {
             auto a = parse_authority("www.example.com").value();
             BOOST_TEST(a.host_type() ==
                 host_type::name);
             BOOST_TEST(a.encoded_host() ==
+                "www.example.com");
+            BOOST_TEST(a.encoded_host_address() ==
                 "www.example.com");
             BOOST_TEST(a.host() ==
                 "www.example.com");
@@ -214,6 +232,9 @@ public:
                 host_type::ipv4);
             BOOST_TEST(a.encoded_host() ==
                 "192.168.0.1");
+            BOOST_TEST(a.encoded_host_address() ==
+                "192.168.0.1");
+            BOOST_TEST(a.encoded_host_name() == "");
             BOOST_TEST(a.host() ==
                 "192.168.0.1");
             BOOST_TEST(
@@ -227,6 +248,8 @@ public:
                 host_type::ipv6);
             BOOST_TEST(a.encoded_host() ==
                 "[1::6:192.168.0.1]");
+            BOOST_TEST(a.encoded_host_address() ==
+                "1::6:192.168.0.1");
             BOOST_TEST(a.host() ==
                 "[1::6:192.168.0.1]");
             BOOST_TEST(a.host_ipv6_address() ==
@@ -239,6 +262,8 @@ public:
                 host_type::ipvfuture);
             BOOST_TEST(a.encoded_host() ==
                 "[v1.x]");
+            BOOST_TEST(a.encoded_host_address() ==
+                "v1.x");
             BOOST_TEST(a.host() ==
                 "[v1.x]");
             BOOST_TEST(a.host_ipvfuture() == "v1.x");
@@ -335,6 +360,15 @@ public:
     }
 
     void
+    testOStream()
+    {
+        authority_view a( "user:pass@www.example.com:8080" );
+        std::ostringstream os;
+        os << a;
+        BOOST_TEST_EQ( os.str(), "user:pass@www.example.com:8080" );
+    }
+
+    void
     run()
     {
         // javadocs
@@ -344,7 +378,7 @@ public:
             (void)a;
         }
         {
-            result< authority_view > rv = parse_authority( "user:pass@www.example.com:8080" );
+            system::result< authority_view > rv = parse_authority( "user:pass@www.example.com:8080" );
             (void)rv;
         }
         {
@@ -357,6 +391,7 @@ public:
         testHost();
         testPort();
         testHostAndPort();
+        testOStream();
     }
 };
 

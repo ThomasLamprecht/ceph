@@ -62,7 +62,7 @@ struct pattern;
         @li @ref parse_uri
         @li @ref parse_uri_reference
 */
-class BOOST_SYMBOL_VISIBLE
+class BOOST_URL_DECL
     url_view_base
     : private detail::parts_base
 {
@@ -89,10 +89,8 @@ class BOOST_SYMBOL_VISIBLE
 
     struct shared_impl;
 
-    BOOST_URL_DECL
     url_view_base() noexcept;
 
-    BOOST_URL_DECL
     explicit url_view_base(
         detail::url_impl const&) noexcept;
 
@@ -110,12 +108,26 @@ class BOOST_SYMBOL_VISIBLE
     url_view_base& operator=(
         url_view_base const&) = delete;
 
-#ifndef BOOST_URL_DOCS
-public:
-#endif
-    BOOST_URL_DECL
+protected:
+    /** Calculate a hash of the url
+
+        This function calculates a hash of the
+        url as if it were always normalized.
+
+        @par Complexity
+        Linear in `this->size()`.
+
+        @par Exception Safety
+        Throws nothing.
+
+        @param salt An initial value to add to
+        the hash
+
+        @return A hash value suitable for use
+        in hash-based containers.
+    */
     std::size_t
-    digest(std::size_t = 0) const noexcept;
+    digest(std::size_t salt = 0) const noexcept;
 
 public:
     //--------------------------------------------
@@ -241,14 +253,14 @@ public:
         @par Exception Safety
         Throws nothing.
     */
-    string_view
+    core::string_view
     buffer() const noexcept
     {
-        return string_view(
+        return core::string_view(
             data(), size());
     }
 
-    /** Return the URL as a string_view
+    /** Return the URL as a core::string_view
 
         @par Complexity
         Constant.
@@ -257,7 +269,7 @@ public:
         Throws nothing.
 
     */
-    operator string_view() const noexcept
+    operator core::string_view() const noexcept
     {
         return buffer();
     }
@@ -297,7 +309,6 @@ public:
         @par Exception Safety
         Calls to allocate may throw.
     */
-    BOOST_URL_DECL
     std::shared_ptr<
         url_view const> persist() const;
 
@@ -340,7 +351,6 @@ public:
             @ref scheme,
             @ref scheme_id.
     */
-    BOOST_URL_DECL
     bool
     has_scheme() const noexcept;
 
@@ -377,8 +387,7 @@ public:
             @ref has_scheme,
             @ref scheme_id.
     */
-    BOOST_URL_DECL
-    string_view
+    core::string_view
     scheme() const noexcept;
 
     /** Return the scheme
@@ -427,7 +436,6 @@ public:
             @ref has_scheme,
             @ref scheme.
     */
-    BOOST_URL_DECL
     urls::scheme
     scheme_id() const noexcept;
 
@@ -519,7 +527,6 @@ public:
             @ref encoded_authority,
             @ref has_authority.
     */
-    BOOST_URL_DECL
     authority_view
     authority() const noexcept;
 
@@ -556,7 +563,6 @@ public:
             @ref authority,
             @ref has_authority.
     */
-    BOOST_URL_DECL
     pct_string_view
     encoded_authority() const noexcept;
 
@@ -603,7 +609,6 @@ public:
             @ref userinfo.
 
     */
-    BOOST_URL_DECL
     bool
     has_userinfo() const noexcept;
 
@@ -645,7 +650,6 @@ public:
             @ref user,
             @ref userinfo.
     */
-    BOOST_URL_DECL
     bool
     has_password() const noexcept;
 
@@ -754,7 +758,6 @@ public:
             @ref user,
             @ref userinfo.
     */
-    BOOST_URL_DECL
     pct_string_view
     encoded_userinfo() const noexcept;
 
@@ -853,7 +856,6 @@ public:
             @ref user,
             @ref userinfo.
     */
-    BOOST_URL_DECL
     pct_string_view
     encoded_user() const noexcept;
 
@@ -946,7 +948,6 @@ public:
             @ref user,
             @ref userinfo.
     */
-    BOOST_URL_DECL
     pct_string_view
     encoded_password() const noexcept;
 
@@ -1067,7 +1068,6 @@ public:
         @li <a href="https://datatracker.ietf.org/doc/html/rfc3986#section-3.2.2"
             >3.2.2. Host (rfc3986)</a>
     */
-    BOOST_URL_DECL
     pct_string_view
     encoded_host() const noexcept;
 
@@ -1182,7 +1182,6 @@ public:
         @li <a href="https://datatracker.ietf.org/doc/html/rfc3986#section-3.2.2"
             >3.2.2. Host (rfc3986)</a>
     */
-    BOOST_URL_DECL
     pct_string_view
     encoded_host_address() const noexcept;
 
@@ -1222,7 +1221,6 @@ public:
         @li <a href="https://datatracker.ietf.org/doc/html/rfc3986#section-3.2.2"
             >3.2.2. Host (rfc3986)</a>
     */
-    BOOST_URL_DECL
     ipv4_address
     host_ipv4_address() const noexcept;
 
@@ -1270,7 +1268,6 @@ public:
         @li <a href="https://datatracker.ietf.org/doc/html/rfc3986#section-3.2.2"
             >3.2.2. Host (rfc3986)</a>
     */
-    BOOST_URL_DECL
     ipv6_address
     host_ipv6_address() const noexcept;
 
@@ -1303,8 +1300,7 @@ public:
         @li <a href="https://datatracker.ietf.org/doc/html/rfc3986#section-3.2.2"
             >3.2.2. Host (rfc3986)</a>
     */
-    BOOST_URL_DECL
-    string_view
+    core::string_view
     host_ipvfuture() const noexcept;
 
     /** Return the host name
@@ -1384,9 +1380,90 @@ public:
         @li <a href="https://datatracker.ietf.org/doc/html/rfc3986#section-3.2.2"
             >3.2.2. Host (rfc3986)</a>
     */
-    BOOST_URL_DECL
     pct_string_view
     encoded_host_name() const noexcept;
+
+    /** Return the IPv6 Zone ID
+
+        If the host type is @ref host_type::ipv6,
+        this function returns the Zone ID as
+        a string. Otherwise an empty string is returned.
+        Any percent-escapes in the string are
+        decoded first.
+
+        @par Example
+        @code
+        assert( url_view( "http://[fe80::1%25eth0]/" ).zone_id() == "eth0" );
+        @endcode
+
+        @par Complexity
+        Linear in `this->encoded_zone_id().size()`.
+
+        @par Exception Safety
+        Calls to allocate may throw.
+
+        @par BNF
+        @code
+        host        = IP-literal / IPv4address / reg-name
+
+        IP-literal = "[" ( IPv6address / IPv6addrz / IPvFuture  ) "]"
+
+        ZoneID = 1*( unreserved / pct-encoded )
+
+        IPv6addrz = IPv6address "%25" ZoneID
+        @endcode
+
+        @par Specification
+        @li <a href="https://datatracker.ietf.org/doc/html/rfc6874"
+            >Representing IPv6 Zone Identifiers in Address Literals and Uniform Resource Identifiers</a>
+    */
+    template<BOOST_URL_STRTOK_TPARAM>
+    BOOST_URL_STRTOK_RETURN
+    zone_id(
+        BOOST_URL_STRTOK_ARG(token)) const
+    {
+        encoding_opts opt;
+        opt.space_as_plus = false;
+        return encoded_zone_id().decode(
+            opt, std::move(token));
+    }
+
+    /** Return the IPv6 Zone ID
+
+        If the host type is @ref host_type::ipv6,
+        this function returns the Zone ID as
+        a string. Otherwise an empty string is returned.
+        The returned string may contain
+        percent escapes.
+
+        @par Example
+        @code
+        assert( url_view( "http://[fe80::1%25eth0]/" ).encoded_zone_id() == "eth0" );
+        @endcode
+
+        @par Complexity
+        Constant.
+
+        @par Exception Safety
+        Throws nothing.
+
+        @par BNF
+        @code
+        host        = IP-literal / IPv4address / reg-name
+
+        IP-literal = "[" ( IPv6address / IPv6addrz / IPvFuture  ) "]"
+
+        ZoneID = 1*( unreserved / pct-encoded )
+
+        IPv6addrz = IPv6address "%25" ZoneID
+        @endcode
+
+        @par Specification
+        @li <a href="https://datatracker.ietf.org/doc/html/rfc6874"
+            >Representing IPv6 Zone Identifiers in Address Literals and Uniform Resource Identifiers</a>
+    */
+    pct_string_view
+    encoded_zone_id() const noexcept;
 
     //--------------------------------------------
     //
@@ -1426,7 +1503,6 @@ public:
             @ref port,
             @ref port_number.
     */
-    BOOST_URL_DECL
     bool
     has_port() const noexcept;
 
@@ -1462,8 +1538,7 @@ public:
             @ref has_port,
             @ref port_number.
     */
-    BOOST_URL_DECL
-    string_view
+    core::string_view
     port() const noexcept;
 
     /** Return the port
@@ -1498,7 +1573,6 @@ public:
             @ref has_port,
             @ref port.
     */
-    BOOST_URL_DECL
     std::uint16_t
     port_number() const noexcept;
 
@@ -1654,7 +1728,6 @@ public:
             @ref path,
             @ref segments.
     */
-    BOOST_URL_DECL
     pct_string_view
     encoded_path() const noexcept;
 
@@ -1695,7 +1768,6 @@ public:
             @ref path,
             @ref segments_view.
     */
-    BOOST_URL_DECL
     segments_view
     segments() const noexcept;
 
@@ -1746,7 +1818,6 @@ public:
             @ref segments,
             @ref segments_encoded_view.
     */
-    BOOST_URL_DECL
     segments_encoded_view
     encoded_segments() const noexcept;
 
@@ -1793,7 +1864,6 @@ public:
             @ref params,
             @ref query.
     */
-    BOOST_URL_DECL
     bool
     has_query() const noexcept;
 
@@ -1895,7 +1965,6 @@ public:
             @ref params,
             @ref query.
     */
-    BOOST_URL_DECL
     pct_string_view
     encoded_query() const noexcept;
 
@@ -1940,11 +2009,9 @@ public:
             @ref has_query,
             @ref query.
     */
-    BOOST_URL_DECL
     params_view
     params() const noexcept;
 
-    BOOST_URL_DECL
     params_view
     params(encoding_opts opt) const noexcept;
 
@@ -1993,7 +2060,6 @@ public:
             @ref params,
             @ref query.
     */
-    BOOST_URL_DECL
     params_encoded_view
     encoded_params() const noexcept;
 
@@ -2036,7 +2102,6 @@ public:
             @ref encoded_fragment,
             @ref fragment.
     */
-    BOOST_URL_DECL
     bool
     has_fragment() const noexcept;
 
@@ -2141,7 +2206,6 @@ public:
             @ref fragment,
             @ref has_fragment.
     */
-    BOOST_URL_DECL
     pct_string_view
     encoded_fragment() const noexcept;
 
@@ -2187,7 +2251,6 @@ public:
             @ref port,
             @ref port_number.
     */
-    BOOST_URL_DECL
     pct_string_view
     encoded_host_and_port() const noexcept;
 
@@ -2216,7 +2279,6 @@ public:
             @ref encoded_resource,
             @ref encoded_target.
     */
-    BOOST_URL_DECL
     pct_string_view
     encoded_origin() const noexcept;
 
@@ -2249,7 +2311,6 @@ public:
             @ref encoded_origin,
             @ref encoded_target.
     */
-    BOOST_URL_DECL
     pct_string_view
     encoded_resource() const noexcept;
 
@@ -2282,7 +2343,6 @@ public:
             @ref encoded_origin,
             @ref encoded_resource.
     */
-    BOOST_URL_DECL
     pct_string_view
     encoded_target() const noexcept;
 
@@ -2311,7 +2371,6 @@ public:
         @return -1 if `*this < other`, 0 if
             `this == other`, and 1 if `this > other`.
     */
-    BOOST_URL_DECL
     int
     compare(url_view_base const& other) const noexcept;
 
@@ -2334,24 +2393,7 @@ public:
         a.normalize();
         url b(u1);
         b.normalize();
-        return std::make_tuple(
-                   a.scheme(),
-                   a.user(),
-                   a.password(),
-                   a.host(),
-                   a.port(),
-                   a.path(),
-                   a.query(),
-                   a.fragment()) ==
-               std::make_tuple(
-                   b.scheme(),
-                   b.user(),
-                   b.password(),
-                   b.host(),
-                   b.port(),
-                   b.path(),
-                   b.query(),
-                   b.fragment());
+        return a.buffer() == b.buffer();
         @endcode
 
         @par Complexity
@@ -2394,24 +2436,7 @@ public:
         a.normalize();
         url b(u1);
         b.normalize();
-        return std::make_tuple(
-                   a.scheme(),
-                   a.user(),
-                   a.password(),
-                   a.host(),
-                   a.port(),
-                   a.path(),
-                   a.query(),
-                   a.fragment()) !=
-               std::make_tuple(
-                   b.scheme(),
-                   b.user(),
-                   b.password(),
-                   b.host(),
-                   b.port(),
-                   b.path(),
-                   b.query(),
-                   b.fragment());
+        return a.buffer() != b.buffer();
         @endcode
 
         @par Complexity
@@ -2454,24 +2479,7 @@ public:
         a.normalize();
         url b(u1);
         b.normalize();
-        return std::make_tuple(
-                   a.scheme(),
-                   a.user(),
-                   a.password(),
-                   a.host(),
-                   a.port(),
-                   a.path(),
-                   a.query(),
-                   a.fragment()) <
-               std::make_tuple(
-                   b.scheme(),
-                   b.user(),
-                   b.password(),
-                   b.host(),
-                   b.port(),
-                   b.path(),
-                   b.query(),
-                   b.fragment());
+        return a.buffer() < b.buffer();
         @endcode
 
         @par Complexity
@@ -2514,24 +2522,7 @@ public:
         a.normalize();
         url b(u1);
         b.normalize();
-        return std::make_tuple(
-                   a.scheme(),
-                   a.user(),
-                   a.password(),
-                   a.host(),
-                   a.port(),
-                   a.path(),
-                   a.query(),
-                   a.fragment()) <=
-               std::make_tuple(
-                   b.scheme(),
-                   b.user(),
-                   b.password(),
-                   b.host(),
-                   b.port(),
-                   b.path(),
-                   b.query(),
-                   b.fragment());
+        return a.buffer() <= b.buffer();
         @endcode
 
         @par Complexity
@@ -2574,24 +2565,7 @@ public:
         a.normalize();
         url b(u1);
         b.normalize();
-        return std::make_tuple(
-                   a.scheme(),
-                   a.user(),
-                   a.password(),
-                   a.host(),
-                   a.port(),
-                   a.path(),
-                   a.query(),
-                   a.fragment()) >
-               std::make_tuple(
-                   b.scheme(),
-                   b.user(),
-                   b.password(),
-                   b.host(),
-                   b.port(),
-                   b.path(),
-                   b.query(),
-                   b.fragment());
+        return a.buffer() > b.buffer();
         @endcode
 
         @par Complexity
@@ -2634,24 +2608,7 @@ public:
         a.normalize();
         url b(u1);
         b.normalize();
-        return std::make_tuple(
-                   a.scheme(),
-                   a.user(),
-                   a.password(),
-                   a.host(),
-                   a.port(),
-                   a.path(),
-                   a.query(),
-                   a.fragment()) >=
-               std::make_tuple(
-                   b.scheme(),
-                   b.user(),
-                   b.password(),
-                   b.host(),
-                   b.port(),
-                   b.path(),
-                   b.query(),
-                   b.fragment());
+        return a.buffer() >= b.buffer();
         @endcode
 
         @par Complexity
@@ -2675,6 +2632,38 @@ public:
         return u0.compare(u1) >= 0;
     }
 
+    /** Format the url to the output stream
+
+        This function serializes the url to
+        the specified output stream. Any
+        percent-escapes are emitted as-is;
+        no decoding is performed.
+
+        @par Example
+        @code
+        url_view u( "http://www.example.com/index.htm" );
+        std::stringstream ss;
+        ss << u;
+        assert( ss.str() == "http://www.example.com/index.htm" );
+        @endcode
+
+        @par Effects
+        @code
+        return os << u.buffer();
+        @endcode
+
+        @par Complexity
+        Linear in `u.buffer().size()`
+
+        @par Exception Safety
+        Basic guarantee.
+
+        @return A reference to the output stream, for chaining
+
+        @param os The output stream to write to.
+
+        @param u The url to write.
+    */
     friend
     std::ostream&
     operator<<(
@@ -2690,7 +2679,6 @@ private:
     // implementation
     //
     //--------------------------------------------
-    BOOST_URL_DECL
     static
     int
     segments_compare(

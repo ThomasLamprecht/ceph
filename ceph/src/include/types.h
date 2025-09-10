@@ -28,12 +28,6 @@
 #include "ceph_frag.h"
 #include "rbd_types.h"
 
-#ifdef __cplusplus
-#ifndef _BACKWARD_BACKWARD_WARNING_H
-#define _BACKWARD_BACKWARD_WARNING_H   // make gcc 4.3 shut up about hash_*
-#endif
-#endif
-
 extern "C" {
 #include <stdint.h>
 #include <sys/types.h>
@@ -44,23 +38,23 @@ extern "C" {
 #include <string>
 #include <list>
 #include <set>
+#include <span>
 #include <boost/container/flat_set.hpp>
 #include <boost/container/flat_map.hpp>
+#include "boost/tuple/tuple.hpp"
 #include <map>
 #include <vector>
 #include <optional>
 #include <ostream>
 #include <iomanip>
+#include <unordered_set>
 
-
-#include "include/unordered_map.h"
+#include "common/Formatter.h"
 
 #include "object.h"
 #include "intarith.h"
 
 #include "acconfig.h"
-
-#include "assert.h"
 
 // DARWIN compatibility
 #ifdef __APPLE__
@@ -91,6 +85,8 @@ template<class A, class B>
 inline std::ostream& operator<<(std::ostream&out, const std::pair<A,B>& v);
 template<class A, class Alloc>
 inline std::ostream& operator<<(std::ostream& out, const std::vector<A,Alloc>& v);
+template<class T, std::size_t Extent>
+inline std::ostream& operator<<(std::ostream& out, const std::span<T, Extent>& s);
 template<class A, std::size_t N, class Alloc>
 inline std::ostream& operator<<(std::ostream& out, const boost::container::small_vector<A,N,Alloc>& v);
 template<class A, class Comp, class Alloc>
@@ -109,6 +105,8 @@ template<class A, class Comp, class Alloc>
 inline std::ostream& operator<<(std::ostream& out, const std::multiset<A,Comp,Alloc>& iset);
 template<class A, class B, class Comp, class Alloc>
 inline std::ostream& operator<<(std::ostream& out, const std::map<A,B,Comp,Alloc>& m);
+template<class A, class B, class Hash, class KeyEqual>
+inline std::ostream& operator<<(std::ostream& out, const std::unordered_map<A,B,Hash, KeyEqual>& m);
 template<class A, class B, class Comp, class Alloc>
 inline std::ostream& operator<<(std::ostream& out, const std::multimap<A,B,Comp,Alloc>& m);
 }
@@ -136,6 +134,19 @@ inline std::ostream& operator<<(std::ostream& out, const std::vector<A,Alloc>& v
   bool first = true;
   out << "[";
   for (const auto& p : v) {
+    if (!first) out << ",";
+    out << p;
+    first = false;
+  }
+  out << "]";
+  return out;
+}
+
+template<class T, std::size_t Extent>
+inline std::ostream& operator<<(std::ostream& out, const std::span<T, Extent>& s) {
+  bool first = true;
+  out << "[";
+  for (const auto& p : s) {
     if (!first) out << ",";
     out << p;
     first = false;
@@ -247,6 +258,22 @@ inline std::ostream& operator<<(std::ostream& out, const std::map<A,B,Comp,Alloc
   return out;
 }
 
+template <class A, class B, class Hash, class KeyEqual>
+inline std::ostream&
+operator<<(std::ostream& out,
+	   const std::unordered_map<A, B, Hash, KeyEqual>& m)
+{
+  out << "{";
+  for (auto it = m.begin();
+       it != m.end();
+       ++it) {
+    if (it != m.begin()) out << ",";
+    out << it->first << "=" << it->second;
+  }
+  out << "}";
+  return out;
+}
+
 template<class A, class B, class Comp, class Alloc>
 inline std::ostream& operator<<(std::ostream& out, const std::multimap<A,B,Comp,Alloc>& m)
 {
@@ -302,8 +329,8 @@ inline std::ostream& operator<<(std::ostream& out, const boost::container::flat_
 /*
  * comparators for stl containers
  */
-// for ceph::unordered_map:
-//   ceph::unordered_map<const char*, long, hash<const char*>, eqstr> vals;
+// for std::unordered_map:
+//   std::unordered_map<const char*, long, hash<const char*>, eqstr> vals;
 struct eqstr
 {
   bool operator()(const char* s1, const char* s2) const
@@ -482,6 +509,10 @@ struct byte_u_t {
   explicit byte_u_t(uint64_t _v) : v(_v) {};
 };
 
+#if FMT_VERSION >= 90000
+template <> struct fmt::formatter<byte_u_t> : fmt::ostream_formatter {};
+#endif
+
 inline std::ostream& operator<<(std::ostream& out, const byte_u_t& b)
 {
   uint64_t n = b.v;
@@ -524,9 +555,12 @@ struct shard_id_t {
   int8_t id;
 
   shard_id_t() : id(0) {}
-  constexpr explicit shard_id_t(int8_t _id) : id(_id) {}
+  explicit constexpr shard_id_t(int8_t _id) : id(_id) {}
 
-  operator int8_t() const { return id; }
+  explicit constexpr operator int8_t() const { return id; }
+  explicit constexpr operator int64_t() const { return id; }
+  explicit constexpr operator int() const { return id; }
+  explicit constexpr operator unsigned() const { return id; }
 
   const static shard_id_t NO_SHARD;
 
@@ -545,8 +579,26 @@ struct shard_id_t {
     ls.push_back(new shard_id_t(1));
     ls.push_back(new shard_id_t(2));
   }
-  bool operator==(const shard_id_t&) const = default;
-  auto operator<=>(const shard_id_t&) const = default;
+  shard_id_t& operator++() { ++id; return *this; }
+  friend constexpr std::strong_ordering operator<=>(const shard_id_t &lhs,
+                                                    const shard_id_t &rhs) {
+    return lhs.id <=> rhs.id;
+  }
+
+  friend constexpr std::strong_ordering operator<=>(int lhs,
+                                                    const shard_id_t &rhs) {
+    return lhs <=> rhs.id;
+  }
+  friend constexpr std::strong_ordering operator<=>(const shard_id_t &lhs,
+                                                    int rhs) {
+    return lhs.id <=> rhs;
+  }
+
+  shard_id_t& operator=(int other) { id = other; return *this; }
+  bool operator==(const shard_id_t &other) const { return id == other.id; }
+
+  shard_id_t operator+(int other) const { return shard_id_t(id + other); }
+  shard_id_t operator-(int other) const { return shard_id_t(id - other); }
 };
 WRITE_CLASS_ENCODER(shard_id_t)
 std::ostream &operator<<(std::ostream &lhs, const shard_id_t &rhs);

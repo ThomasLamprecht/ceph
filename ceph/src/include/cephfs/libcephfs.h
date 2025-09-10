@@ -40,7 +40,7 @@ extern "C" {
 #endif
 
 #define LIBCEPHFS_VER_MAJOR 10
-#define LIBCEPHFS_VER_MINOR 0
+#define LIBCEPHFS_VER_MINOR 1
 #define LIBCEPHFS_VER_EXTRA 3
 
 #define LIBCEPHFS_VERSION(maj, min, extra) ((maj << 16) + (min << 8) + extra)
@@ -1013,7 +1013,7 @@ int ceph_fstatx(struct ceph_mount_info *cmount, int fd, struct ceph_statx *stx,
  * @param relpath to the file/directory to get statistics of
  * @param stx the ceph_statx struct that will be filled in with the file's statistics.
  * @param want bitfield of CEPH_STATX_* flags showing designed attributes
- * @param flags bitfield that can be used to set AT_* modifier flags (AT_STATX_SYNC_AS_STAT, AT_STATX_FORCE_SYNC, AT_STATX_DONT_SYNC and AT_SYMLINK_NOFOLLOW)
+ * @param flags bitfield that can be used to set AT_* modifier flags (AT_STATX_DONT_SYNC, AT_SYMLINK_NOFOLLOW and AT_EMPTY_PATH)
  * @returns 0 on success or negative error code on failure.
  */
 int ceph_statxat(struct ceph_mount_info *cmount, int dirfd, const char *relpath,
@@ -1180,7 +1180,7 @@ int ceph_lchown(struct ceph_mount_info *cmount, const char *path, int uid, int g
  * @param relpath the relpath of the file/directory to change the ownership of.
  * @param uid the user id to set on the file/directory.
  * @param gid the group id to set on the file/directory.
- * @param flags bitfield that can be used to set AT_* modifier flags (AT_SYMLINK_NOFOLLOW)
+ * @param flags bitfield that can be used to set AT_* modifier flags (AT_SYMLINK_NOFOLLOW and AT_EMPTY_PATH)
  * @returns 0 on success or negative error code on failure.
  */
 int ceph_chownat(struct ceph_mount_info *cmount, int dirfd, const char *relpath,
@@ -2285,6 +2285,23 @@ int ceph_get_snap_info(struct ceph_mount_info *cmount,
  * @param snap_info snapshot info struct (fetched via call to ceph_get_snap_info()).
  */
 void ceph_free_snap_info_buffer(struct snap_info *snap_info);
+
+/**
+ * perf counters via libcephfs API.
+ */
+
+/**
+ * Get a json string of performance counters
+ *
+ * @param cmount the ceph mount handle to use.
+ * @param perf_dump buffer holding the perf dump
+ *
+ * Returns 0 success with the performance counters populated in the
+ * passed in perf_dump buffer. Caller is responsible for freeing the
+ * @perf_dump buffer using free().
+ */
+int ceph_get_perf_counters(struct ceph_mount_info *cmount, char **perf_dump);
+
 #ifdef __cplusplus
 }
 #endif

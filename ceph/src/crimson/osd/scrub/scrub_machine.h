@@ -18,7 +18,6 @@
 
 #include "common/fmt_common.h"
 #include "common/hobject.h"
-#include "common/hobject_fmt.h"
 #include "crimson/common/log.h"
 #include "osd/osd_types_fmt.h"
 #include "scrub_validator.h"
@@ -50,7 +49,7 @@ struct simple_event_t : sc::event<T> {
   }
 };
 
-template <typename T, has_formatter V>
+template <typename T, fmt::formattable V>
 struct value_event_t : sc::event<T> {
   const V value;
 

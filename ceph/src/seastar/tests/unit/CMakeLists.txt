@@ -318,7 +318,9 @@ seastar_add_test (file_io
   SOURCES file_io_test.cc)
 
 seastar_add_test (file_utils
-  SOURCES file_utils_test.cc)
+  SOURCES
+    file_utils_test.cc
+    expected_exception.hh)
 
 seastar_add_test (foreign_ptr
   SOURCES foreign_ptr_test.cc)
@@ -332,7 +334,9 @@ seastar_add_test (fstream
     mock_file.hh)
 
 seastar_add_test (futures
-  SOURCES futures_test.cc)
+  SOURCES
+    futures_test.cc
+    expected_exception.hh)
 
 seastar_add_test (sharded
   SOURCES sharded_test.cc)
@@ -353,6 +357,9 @@ seastar_add_test (network_interface
 
 seastar_add_test (json_formatter
   SOURCES json_formatter_test.cc)
+
+seastar_add_test (libc_wrapper
+  SOURCES libc_wrapper_test.cc)
 
 seastar_add_test (locking
   SOURCES locking_test.cc)
@@ -394,7 +401,9 @@ seastar_add_test (rpc
     rpc_test.cc)
 
 seastar_add_test (semaphore
-  SOURCES semaphore_test.cc)
+  SOURCES
+    semaphore_test.cc
+    expected_exception.hh)
 
 seastar_add_test (shared_ptr
   KIND BOOST
@@ -457,6 +466,10 @@ seastar_add_test (source_location
 
 seastar_add_test (shared_token_bucket
   SOURCES shared_token_bucket_test.cc)
+
+seastar_add_test (prometheus_http
+  SOURCES
+    prometheus_http_test.cc)
 
 function(seastar_add_certgen name)
   cmake_parse_arguments(CERT
@@ -528,6 +541,7 @@ function(seastar_add_certgen name)
   set(CERT_PRIVKEY ${CERT_NAME}.key)
   set(CERT_REQ ${CERT_NAME}.csr)
   set(CERT_CERT ${CERT_NAME}.crt)
+  set(CERT_CERT_DER ${CERT_NAME}.crt.der)
 
   set(CERT_CAPRIVKEY ca${CERT_NAME}.key)
   set(CERT_CAROOT ca${CERT_NAME}.pem)
@@ -561,15 +575,21 @@ function(seastar_add_certgen name)
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
   )
 
-  
+
   add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/${CERT_CERT}"
     COMMAND ${OPENSSL} x509 -req -in ${CERT_REQ} -CA ${CERT_CAROOT} -CAkey ${CERT_CAPRIVKEY} -CAcreateserial -out ${CERT_CERT} -days ${CERT_DAYS} -extensions req_ext -extfile ${CERT_NAME}.cfg
     DEPENDS "${CMAKE_CURRENT_BINARY_DIR}/${CERT_REQ}"  "${CMAKE_CURRENT_BINARY_DIR}/${CERT_CAROOT}" "${CMAKE_CURRENT_BINARY_DIR}/${CERT_NAME}.cfg"
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
   )
 
-  add_custom_target(${name}
+  add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/${CERT_CERT_DER}"
+    COMMAND ${OPENSSL} x509 -in ${CERT_CERT} -out ${CERT_CERT_DER} -outform der
     DEPENDS "${CMAKE_CURRENT_BINARY_DIR}/${CERT_CERT}"
+    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+  )
+
+  add_custom_target(${name}
+    DEPENDS "${CMAKE_CURRENT_BINARY_DIR}/${CERT_CERT_DER}"
   )
 endfunction()
 
@@ -725,7 +745,9 @@ seastar_add_test (exception_logging
   SOURCES exception_logging_test.cc)
 
 seastar_add_test (closeable
-  SOURCES closeable_test.cc)
+  SOURCES
+    closeable_test.cc
+    expected_exception.hh)
 
 seastar_add_test (pipe
   SOURCES pipe_test.cc)

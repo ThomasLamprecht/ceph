@@ -1,11 +1,11 @@
 import os
-import pkgutil
+import importlib.util
 import shutil
 import subprocess
 import sys
 import tempfile
 import textwrap
-if not pkgutil.find_loader('setuptools'):
+if not importlib.util.find_spec('setuptools'):
     from distutils.core import setup
     from distutils.extension import Extension
 else:
@@ -116,10 +116,16 @@ def check_sanity():
             output_dir=tmp_dir
         )
 
+        ldflags = os.environ.get('LDFLAGS')
+        if ldflags:
+            extra_postargs = ldflags.split()
+        else:
+            extra_postargs = None
         compiler.link_executable(
             objects=link_objects,
             output_progname=os.path.join(tmp_dir, 'rbd_dummy'),
             libraries=['rbd', 'rados'],
+            extra_postargs=extra_postargs,
             output_dir=tmp_dir,
         )
 

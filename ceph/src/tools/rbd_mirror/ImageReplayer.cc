@@ -29,6 +29,9 @@
 #include "tools/rbd_mirror/image_replayer/journal/Replayer.h"
 #include "tools/rbd_mirror/image_replayer/journal/StateBuilder.h"
 #include <map>
+#include <shared_mutex> // for std::shared_lock
+
+#include <boost/optional/optional_io.hpp>
 
 #define dout_context g_ceph_context
 #define dout_subsys ceph_subsys_rbd_mirror
@@ -591,12 +594,12 @@ void ImageReplayer<I>::stop(Context *on_finish, bool manual, bool restart)
   }
 
   if (shut_down_replay) {
-    on_stop_journal_replay();
+    on_stop_replay();
   }
 }
 
 template <typename I>
-void ImageReplayer<I>::on_stop_journal_replay(int r, const std::string &desc)
+void ImageReplayer<I>::on_stop_replay(int r, const std::string &desc)
 {
   dout(10) << dendl;
 
@@ -667,7 +670,7 @@ bool ImageReplayer<I>::on_replay_interrupted()
   }
 
   if (shut_down) {
-    on_stop_journal_replay();
+    on_stop_replay();
   }
   return shut_down;
 }
@@ -1052,7 +1055,7 @@ void ImageReplayer<I>::handle_replayer_notification() {
   if (m_replayer->is_resync_requested()) {
     dout(10) << "resync requested" << dendl;
     m_resync_requested = true;
-    on_stop_journal_replay(0, "resync requested");
+    on_stop_replay(0, "resync requested");
     return;
   }
 
@@ -1062,7 +1065,7 @@ void ImageReplayer<I>::handle_replayer_notification() {
     dout(10) << "replay interrupted: "
              << "r=" << error_code << ", "
              << "error=" << error_description << dendl;
-    on_stop_journal_replay(error_code, error_description);
+    on_stop_replay(error_code, error_description);
     return;
   }
 

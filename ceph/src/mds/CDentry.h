@@ -17,29 +17,55 @@
 
 #include <string>
 #include <string_view>
-#include <set>
 
 #include "include/counter.h"
 #include "include/types.h"
 #include "include/buffer_fwd.h"
 #include "include/lru.h"
 #include "include/elist.h"
-#include "include/filepath.h"
+#include <boost/intrusive/set.hpp>
 
-#include "BatchOp.h"
 #include "MDSCacheObject.h"
-#include "MDSContext.h"
 #include "SimpleLock.h"
 #include "LocalLockC.h"
-#include "ScrubHeader.h"
 
+class filepath;
+class BatchOp;
 class CInode;
 class CDir;
 class Locker;
 class CDentry;
 class LogSegment;
+class MDSContext;
 
 class Session;
+
+struct ClientLease : public boost::intrusive::set_base_hook<>
+{
+  MEMPOOL_CLASS_HELPERS();
+
+  ClientLease(CDentry *p, Session *s) :
+    parent(p), session(s),
+    item_session_lease(this),
+    item_lease(this) { }
+  ClientLease() = delete;
+  client_t get_client() const;
+
+  CDentry *parent;
+  Session *session;
+
+  ceph_seq_t seq = 0;
+  utime_t ttl;
+  xlist<ClientLease*>::item item_session_lease; // per-session list
+  xlist<ClientLease*>::item item_lease;         // global list
+};
+struct client_is_key
+{
+  typedef client_t type;
+  const type operator() (const ClientLease& l) const {
+    return l.get_client();
+  }
+};
 
 // define an ordering
 bool operator<(const CDentry& l, const CDentry& r);
@@ -100,34 +126,13 @@ public:
 
   CDentry(std::string_view n, __u32 h,
           mempool::mds_co::string alternate_name,
-	  snapid_t f, snapid_t l) :
-    hash(h),
-    first(f), last(l),
-    item_dirty(this),
-    lock(this, &lock_type),
-    versionlock(this, &versionlock_type),
-    name(n),
-    alternate_name(std::move(alternate_name))
-  {}
+	  snapid_t f, snapid_t l);
   CDentry(std::string_view n, __u32 h,
           mempool::mds_co::string alternate_name,
           inodeno_t ino, unsigned char dt,
-	  snapid_t f, snapid_t l) :
-    hash(h),
-    first(f), last(l),
-    item_dirty(this),
-    lock(this, &lock_type),
-    versionlock(this, &versionlock_type),
-    name(n),
-    alternate_name(std::move(alternate_name))
-  {
-    linkage.remote_ino = ino;
-    linkage.remote_d_type = dt;
-  }
+          snapid_t f, snapid_t l);
 
-  ~CDentry() override {
-    ceph_assert(batch_ops.empty());
-  }
+  ~CDentry() override;
 
   std::string_view pin_name(int p) const override {
     switch (p) {
@@ -206,7 +211,7 @@ public:
 
   bool use_projected(client_t client, const MutationRef& mut) const {
     return lock.can_read_projected(client) || 
-      lock.get_xlock_by() == mut;
+      lock.is_xlocked_by(mut);
   }
   linkage_t *get_linkage(client_t client, const MutationRef& mut) {
     return use_projected(client, mut) ? get_projected_linkage() : get_linkage();
@@ -324,27 +329,25 @@ public:
   // replicas (on clients)
 
   bool is_any_leases() const {
-    return !client_lease_map.empty();
+    return !client_leases.empty();
   }
   const ClientLease *get_client_lease(client_t c) const {
-    if (client_lease_map.count(c))
-      return client_lease_map.find(c)->second;
-    return 0;
+    auto it = client_leases.find(c);
+    if (it != client_leases.end())
+      return &(*it);
+    return nullptr;
   }
   ClientLease *get_client_lease(client_t c) {
-    if (client_lease_map.count(c))
-      return client_lease_map.find(c)->second;
-    return 0;
+    auto it = client_leases.find(c);
+    if (it != client_leases.end())
+      return &(*it);
+    return nullptr;
   }
   bool have_client_lease(client_t c) const {
-    const ClientLease *l = get_client_lease(c);
-    if (l) 
-      return true;
-    else
-      return false;
+    return client_leases.count(c);
   }
 
-  ClientLease *add_client_lease(client_t c, Session *session);
+  ClientLease *add_client_lease(Session *session);
   void remove_client_lease(ClientLease *r, Locker *locker);  // returns remaining mask (if any), and kicks locker eval_gathers
   void remove_client_leases(Locker *locker);
 
@@ -373,7 +376,10 @@ public:
   SimpleLock lock; // FIXME referenced containers not in mempool
   LocalLockC versionlock; // FIXME referenced containers not in mempool
 
-  mempool::mds_co::map<client_t,ClientLease*> client_lease_map;
+  typedef boost::intrusive::set<
+    ClientLease, boost::intrusive::key_of_value<client_is_key>> ClientLeaseMap;
+  ClientLeaseMap client_leases;
+
   std::map<int, std::unique_ptr<BatchOp>> batch_ops;
 
   ceph_tid_t reintegration_reqid = 0;

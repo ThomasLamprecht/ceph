@@ -2,6 +2,7 @@
 // vim: ts=8 sw=2 smarttab
 
 #include "dbstore.h"
+#include "log/Log.h"
 
 using namespace std;
 
@@ -1978,7 +1979,7 @@ int DB::Object::Delete::create_dm(const DoutPrefixProvider *dpp,
 }
 
 int DB::get_entry(const std::string& oid, const std::string& marker,
-			      std::unique_ptr<rgw::sal::Lifecycle::LCEntry>* entry)
+                  rgw::sal::LCEntry& entry)
 {
   int ret = 0;
   const DoutPrefixProvider *dpp = get_def_dpp();
@@ -1987,7 +1988,7 @@ int DB::get_entry(const std::string& oid, const std::string& marker,
   InitializeParams(dpp, &params);
 
   params.op.lc_entry.index = oid;
-  params.op.lc_entry.entry.set_bucket(marker);
+  params.op.lc_entry.entry.bucket = marker;
 
   params.op.query_str = "get_entry";
   ret = ProcessOp(dpp, "GetLCEntry", &params);
@@ -1997,14 +1998,8 @@ int DB::get_entry(const std::string& oid, const std::string& marker,
     goto out;
   }
 
-  if (!params.op.lc_entry.entry.get_start_time() == 0) { //ensure entry found
-    rgw::sal::Lifecycle::LCEntry* e;
-    e = new rgw::sal::StoreLifecycle::StoreLCEntry(params.op.lc_entry.entry);
-    if (!e) {
-      ret = -ENOMEM;
-      goto out;
-    }
-    entry->reset(e);
+  if (params.op.lc_entry.entry.start_time != 0) { //ensure entry found
+    entry = std::move(params.op.lc_entry.entry);
   }
 
 out:
@@ -2012,7 +2007,7 @@ out:
 }
 
 int DB::get_next_entry(const std::string& oid, const std::string& marker,
-			      std::unique_ptr<rgw::sal::Lifecycle::LCEntry>* entry)
+                       rgw::sal::LCEntry& entry)
 {
   int ret = 0;
   const DoutPrefixProvider *dpp = get_def_dpp();
@@ -2021,7 +2016,7 @@ int DB::get_next_entry(const std::string& oid, const std::string& marker,
   InitializeParams(dpp, &params);
 
   params.op.lc_entry.index = oid;
-  params.op.lc_entry.entry.set_bucket(marker);
+  params.op.lc_entry.entry.bucket = marker;
 
   params.op.query_str = "get_next_entry";
   ret = ProcessOp(dpp, "GetLCEntry", &params);
@@ -2031,21 +2026,15 @@ int DB::get_next_entry(const std::string& oid, const std::string& marker,
     goto out;
   }
 
-  if (!params.op.lc_entry.entry.get_start_time() == 0) { //ensure entry found
-    rgw::sal::Lifecycle::LCEntry* e;
-    e = new rgw::sal::StoreLifecycle::StoreLCEntry(params.op.lc_entry.entry);
-    if (!e) {
-      ret = -ENOMEM;
-      goto out;
-    }
-    entry->reset(e);
+  if (params.op.lc_entry.entry.start_time != 0) { //ensure entry found
+    entry = std::move(params.op.lc_entry.entry);
   }
 
 out:
   return ret;
 }
 
-int DB::set_entry(const std::string& oid, rgw::sal::Lifecycle::LCEntry& entry)
+int DB::set_entry(const std::string& oid, const rgw::sal::LCEntry& entry)
 {
   int ret = 0;
   const DoutPrefixProvider *dpp = get_def_dpp();
@@ -2068,7 +2057,7 @@ out:
 }
 
 int DB::list_entries(const std::string& oid, const std::string& marker,
-  				 uint32_t max_entries, std::vector<std::unique_ptr<rgw::sal::Lifecycle::LCEntry>>& entries)
+                     uint32_t max_entries, std::vector<rgw::sal::LCEntry>& entries)
 {
   int ret = 0;
   const DoutPrefixProvider *dpp = get_def_dpp();
@@ -2090,14 +2079,14 @@ int DB::list_entries(const std::string& oid, const std::string& marker,
   }
 
   for (auto& entry : params.op.lc_entry.list_entries) {
-    entries.push_back(std::make_unique<rgw::sal::StoreLifecycle::StoreLCEntry>(std::move(entry)));
+    entries.push_back(std::move(entry));
   }
 
 out:
   return ret;
 }
 
-int DB::rm_entry(const std::string& oid, rgw::sal::Lifecycle::LCEntry& entry)
+int DB::rm_entry(const std::string& oid, const rgw::sal::LCEntry& entry)
 {
   int ret = 0;
   const DoutPrefixProvider *dpp = get_def_dpp();
@@ -2119,7 +2108,7 @@ out:
   return ret;
 }
 
-int DB::get_head(const std::string& oid, std::unique_ptr<rgw::sal::Lifecycle::LCHead>* head)
+int DB::get_head(const std::string& oid, rgw::sal::LCHead& head)
 {
   int ret = 0;
   const DoutPrefixProvider *dpp = get_def_dpp();
@@ -2136,13 +2125,13 @@ int DB::get_head(const std::string& oid, std::unique_ptr<rgw::sal::Lifecycle::LC
     goto out;
   }
 
-  *head = std::make_unique<rgw::sal::StoreLifecycle::StoreLCHead>(params.op.lc_head.head);
+  head = std::move(params.op.lc_head.head);
 
 out:
   return ret;
 }
 
-int DB::put_head(const std::string& oid, rgw::sal::Lifecycle::LCHead& head)
+int DB::put_head(const std::string& oid, const rgw::sal::LCHead& head)
 {
   int ret = 0;
   const DoutPrefixProvider *dpp = get_def_dpp();

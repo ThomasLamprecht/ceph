@@ -1138,7 +1138,11 @@ extern "C" int ceph_statxat(struct ceph_mount_info *cmount, int dirfd, const cha
 {
   if (!cmount->is_mounted())
     return -ENOTCONN;
+#ifdef CEPH_AT_EMPTY_PATH
+  if (flags & ~CEPH_AT_EMPTY_PATH)
+#else
   if (flags & ~CEPH_REQ_FLAG_MASK)
+#endif
     return -EINVAL;
   return cmount->get_client()->statxat(dirfd, relpath, stx, cmount->default_perms,
                                        want, flags);
@@ -2535,4 +2539,15 @@ extern "C" void ceph_free_snap_info_buffer(struct snap_info *snap_info) {
     free((void *)snap_info->snap_metadata[i].key); // malloc'd memory is key+value composite
   }
   free(snap_info->snap_metadata);
+}
+
+extern "C" int ceph_get_perf_counters(struct ceph_mount_info *cmount, char **perf_dump) {
+  bufferlist outbl;
+  int r = cmount->get_client()->get_perf_counters(&outbl);
+  if (r != 0) {
+    return r;
+  }
+
+  do_out_buffer(outbl, perf_dump, NULL);
+  return outbl.length();
 }

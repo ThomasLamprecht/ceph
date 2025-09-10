@@ -1326,7 +1326,6 @@ class BlockSysFs:
                         result[holder]['uuid'] = content_split[1]
         return result
 
-
 class UdevData:
     """
     Class representing udev data for a specific device.

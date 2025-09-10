@@ -43,6 +43,7 @@
 #include <fmt/core.h>
 #include <fmt/format.h>
 
+#include <iosfwd>
 #include <string_view>
 
 #include "common/LogClient.h"
@@ -114,7 +115,7 @@ struct objs_fix_list_t {
 struct shard_as_auth_t {
   // note: 'not_found' differs from 'not_usable' in that 'not_found'
   // does not carry an error message to be cluster-logged.
-  enum class usable_t : uint8_t { not_usable, not_found, usable };
+  enum class usable_t : uint8_t { not_usable, not_found, usable, not_usable_no_err };
 
   // the ctor used when the shard should not be considered as auth
   explicit shard_as_auth_t(std::string err_msg)
@@ -146,8 +147,9 @@ struct shard_as_auth_t {
   shard_as_auth_t(const object_info_t& anoi,
                   shard_to_scrubmap_t::iterator it,
                   std::string err_msg,
-                  std::optional<uint32_t> data_digest)
-      : possible_auth{usable_t::usable}
+                  std::optional<uint32_t> data_digest,
+                  bool nonprimary_ec)
+      : possible_auth{nonprimary_ec?usable_t::not_usable_no_err:usable_t::usable}
       , error_text{err_msg}
       , oi{anoi}
       , auth_iter{it}
@@ -164,9 +166,10 @@ struct shard_as_auth_t {
   // other in/out arguments) via this struct
 };
 
+namespace fmt {
 // the format specifier {D} is used to request debug output
 template <>
-struct fmt::formatter<shard_as_auth_t> {
+struct formatter<shard_as_auth_t> {
   template <typename ParseContext>
   constexpr auto parse(ParseContext& ctx)
   {
@@ -177,7 +180,7 @@ struct fmt::formatter<shard_as_auth_t> {
     return it;
   }
   template <typename FormatContext>
-  auto format(shard_as_auth_t const& as_auth, FormatContext& ctx)
+  auto format(shard_as_auth_t const& as_auth, FormatContext& ctx) const
   {
     if (debug_log) {
       // note: 'if' chain, as hard to consistently (on all compilers) avoid some
@@ -189,6 +192,11 @@ struct fmt::formatter<shard_as_auth_t> {
       }
       if (as_auth.possible_auth == shard_as_auth_t::usable_t::not_found) {
         return fmt::format_to(ctx.out(), "{{shard-not-found}}");
+      }
+      if (as_auth.possible_auth == shard_as_auth_t::usable_t::not_usable_no_err) {
+        return fmt::format_to(ctx.out(),
+                              "{{shard-not-usable-no-err:{}}}",
+                              as_auth.error_text);
       }
       return fmt::format_to(ctx.out(),
                             "{{shard-usable: soid:{} {{txt:{}}} }}",
@@ -208,6 +216,7 @@ struct fmt::formatter<shard_as_auth_t> {
 
   bool debug_log{false};
 };
+} // namespace fmt
 
 struct auth_selection_t {
   shard_to_scrubmap_t::iterator auth;  ///< an iter into one of this_chunk->maps
@@ -229,7 +238,7 @@ struct fmt::formatter<auth_selection_t> {
   }
 
   template <typename FormatContext>
-  auto format(auth_selection_t const& aus, FormatContext& ctx)
+  auto format(auth_selection_t const& aus, FormatContext& ctx) const
   {
     return fmt::format_to(ctx.out(),
                           " {{AU-S: {}->{:x} OI({:x}:{}) {} dm:{}}} ",
@@ -356,6 +365,7 @@ class ScrubBackend {
   const spg_t m_pg_id;
   std::vector<pg_shard_t> m_acting_but_me;  // primary only
   bool m_is_replicated{true};
+  bool m_is_optimized_ec{false};
   std::string_view m_mode_desc;
   std::string m_formatted_id;
   const PGPool& m_pool;
@@ -432,7 +442,8 @@ class ScrubBackend {
                            shard_info_wrapper& shard_result,
                            inconsistent_obj_wrapper& obj_result,
                            std::stringstream& errorstream,
-                           bool has_snapset);
+                           bool has_snapset,
+                           const pg_shard_t &shard);
 
   void repair_object(const hobject_t& soid,
                      const auth_peers_t& ok_peers,
@@ -482,7 +493,7 @@ class ScrubBackend {
   /**
    * Validate consistency of the object info and snap sets.
    */
-  void scrub_snapshot_metadata(ScrubMap& map);
+  void scrub_snapshot_metadata(ScrubMap& map, const pg_shard_t &srd);
 
   /**
    *  Updates the "global" (i.e. - not 'per-chunk') databases:
@@ -514,15 +525,18 @@ class ScrubBackend {
     Scrub::SnapMapReaderI& snaps_getter);
 
   // accessing the PG backend for this translation service
-  uint64_t logical_to_ondisk_size(uint64_t logical_size) const;
+  uint64_t logical_to_ondisk_size(uint64_t logical_size,
+                                 shard_id_t shard_id) const;
 };
 
+namespace fmt {
+
 template <>
-struct fmt::formatter<data_omap_digests_t> {
+struct formatter<data_omap_digests_t> {
   constexpr auto parse(format_parse_context& ctx) { return ctx.begin(); }
 
   template <typename FormatContext>
-  auto format(const data_omap_digests_t& dg, FormatContext& ctx)
+  auto format(const data_omap_digests_t& dg, FormatContext& ctx) const
   {
     // can't use value_or() due to different output types
     if (std::get<0>(dg).has_value()) {
@@ -539,7 +553,7 @@ struct fmt::formatter<data_omap_digests_t> {
 };
 
 template <>
-struct fmt::formatter<std::pair<hobject_t, data_omap_digests_t>> {
+struct formatter<std::pair<hobject_t, data_omap_digests_t>> {
   constexpr auto parse(format_parse_context& ctx) { return ctx.begin(); }
 
   template <typename FormatContext>
@@ -552,3 +566,4 @@ struct fmt::formatter<std::pair<hobject_t, data_omap_digests_t>> {
 			  std::get<1>(x));
   }
 };
+} // namespace fmt

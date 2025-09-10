@@ -10,5 +10,5 @@ workload:
           client.0:
             - cls
         env:
-          CLS_RBD_GTEST_FILTER: '*:-TestClsRbd.mirror_snapshot'
+          CLS_RBD_GTEST_FILTER: '-TestClsRbd.group_snap_set:TestClsRbd.group_snap_remove'
     - print: "**** done end rados_api.yaml"

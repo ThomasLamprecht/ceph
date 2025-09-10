@@ -9,9 +9,11 @@
 #include <string_view>
 #include <ctime>
 #include <lua.hpp>
+#include <chrono>
 
 #include "include/common_fwd.h"
 #include "rgw_perf_counters.h"
+#include <common/ceph_time.h>
 
 // a helper type traits structs for detecting std::variant
 template<class>
@@ -66,16 +68,36 @@ inline void unsetglobal(lua_State* L, const char* name)
 void stack_dump(lua_State* L);
 
 class lua_state_guard {
-  const std::size_t max_memory;
+  std::size_t max_memory;
+  std::size_t mem_in_use;
+  std::chrono::milliseconds max_runtime;
+  ceph::real_clock::time_point start_time;
   const DoutPrefixProvider* const dpp;
   lua_State* const state;
-public:
-  lua_state_guard(std::size_t _max_memory, const DoutPrefixProvider* _dpp);
+
+  static void runtime_hook(lua_State* L, lua_Debug* ar);
+  void set_runtime_hook();
+
+ public:
+  lua_state_guard(std::size_t _max_memory, std::uint64_t _max_runtime,
+                  const DoutPrefixProvider* _dpp);
   ~lua_state_guard();
   lua_State* get() { return state; }
+  void reset_start_time() { start_time = ceph::real_clock::now(); }
+
+  std::size_t get_max_memory() const { return max_memory; }
+  std::size_t get_mem_in_use() const { return mem_in_use; }
+  std::chrono::milliseconds get_max_runtime() const { return max_runtime; }
+  bool set_max_memory(std::size_t _max_memory);
+  void set_mem_in_use(std::size_t _mem_in_use);
+  void set_max_runtime(std::uint64_t _max_runtime);
 };
 
 int dostring(lua_State* L, const char* str);
+
+// keys for the lua registry
+static constexpr const char* max_runtime_key = "runtimeguard_max_runtime";
+static constexpr const char* start_time_key = "runtimeguard_start_time";
 
 constexpr const int MAX_LUA_VALUE_SIZE = 1000;
 constexpr const int MAX_LUA_KEY_ENTRIES = 100000;
@@ -292,10 +314,9 @@ template<typename MapType>
 typename MapType::iterator* create_iterator_metadata(lua_State* L, const std::string_view name, 
     const typename MapType::iterator& start_it, const typename MapType::iterator& end_it) {
   using Iterator = typename MapType::iterator;
-  const std::string qualified_name = get_iterator_name(name);
   // create metatable for userdata
   // metatable is created before the userdata to save on allocation if the metatable already exists
-  const auto metatable_is_new = luaL_newmetatable(L, qualified_name.c_str());
+  const auto metatable_is_new = luaL_newmetatable(L, get_iterator_name(name).c_str());
   const auto metatable_pos = lua_gettop(L);
   int userdata_pos;
   Iterator* new_it = nullptr;

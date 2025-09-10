@@ -233,7 +233,12 @@ class LocalRemoteProcess(object):
         else:
             self.stderr.write(err)
 
-    def wait(self):
+    def _handle_subprocess_output(self, output, stream):
+        if isinstance(stream, StringIO):
+            return rm_nonascii_chars(output)
+        return output
+
+    def wait(self, timeout=None):
         # Null subproc.stdin so communicate() does not try flushing/closing it
         # again.
         if self.stdin is not None and self.stdin.closed:
@@ -249,8 +254,9 @@ class LocalRemoteProcess(object):
             else:
                 return
 
-        out, err = self.subproc.communicate()
-        out, err = rm_nonascii_chars(out), rm_nonascii_chars(err)
+        out, err = self.subproc.communicate(timeout=timeout)
+        out = self._handle_subprocess_output(out, self.stdout)
+        err = self._handle_subprocess_output(err, self.stderr)
         self._write_stdout(out)
         self._write_stderr(err)
 
@@ -498,7 +504,7 @@ sudo() {
         )
 
         if wait:
-            proc.wait()
+            proc.wait(timeout)
 
         return proc
 
@@ -820,6 +826,8 @@ class LocalCephManager(CephManager):
         self.testdir = None
         self.RADOS_CMD = [RADOS_CMD]
 
+        self.save_conf_epoch()
+
     def get_ceph_cmd(self, **kwargs):
         return [CEPH_CMD]
 
@@ -932,8 +940,8 @@ class LocalMDSCluster(LocalCephCluster, tasks.cephfs.filesystem.MDSClusterBase):
         # FIXME: unimplemented
         pass
 
-    def newfs(self, name='cephfs', create=True):
-        return LocalFilesystem(self._ctx, name=name, create=create)
+    def newfs(self, name='cephfs', create=True, **kwargs):
+        return LocalFilesystem(self._ctx, name=name, create=create, **kwargs)
 
     def delete_all_filesystems(self):
         """
@@ -954,7 +962,8 @@ class LocalMgrCluster(LocalCephCluster, tasks.mgr.mgr_test_case.MgrClusterBase):
 tasks.mgr.mgr_test_case.MgrCluster = LocalMgrCluster
 
 class LocalFilesystem(LocalMDSCluster, tasks.cephfs.filesystem.FilesystemBase):
-    def __init__(self, ctx, fs_config={}, fscid=None, name=None, create=False, cluster_name='ceph'):
+    def __init__(self, ctx, fs_config={}, fscid=None, name=None, create=False, cluster_name='ceph',
+                 **kwargs):
         # Deliberately skip calling Filesystem constructor
         LocalMDSCluster.__init__(self, ctx, cluster_name=cluster_name)
 
@@ -977,7 +986,12 @@ class LocalFilesystem(LocalMDSCluster, tasks.cephfs.filesystem.FilesystemBase):
             if fscid is not None:
                 raise RuntimeError("cannot specify fscid when creating fs")
             if create and not self.legacy_configured():
-                self.create()
+                self.create(recover=kwargs.pop("fs_recover", False),
+                            metadata_overlay=kwargs.pop("fs_metadata_overlay",
+                                                        False),
+                            fs_ops=kwargs.pop("fs_ops", None),
+                            yes_i_really_really_mean_it=kwargs.pop(
+                                "yes_i_really_really_mean_it", False))
         else:
             if fscid is not None:
                 self.id = fscid
@@ -1214,13 +1228,13 @@ class LoggingResultTemplate(object):
 
     def startTest(self, test):
         log.info("Starting test: {0}".format(self.getDescription(test)))
-        test.started_at = datetime.datetime.utcnow()
+        test.started_at = datetime.datetime.now(datetime.timezone.utc)
         return super(LoggingResultTemplate, self).startTest(test)
 
     def stopTest(self, test):
         log.info("Stopped test: {0} in {1}s".format(
             self.getDescription(test),
-            (datetime.datetime.utcnow() - test.started_at).total_seconds()
+            (datetime.datetime.now(datetime.timezone.utc) - test.started_at).total_seconds()
         ))
 
     def addSkip(self, test, reason):
@@ -1253,7 +1267,7 @@ def launch_individually(overall_suite):
     if opt_rotate_logs:
         logrotate = LogRotate()
 
-    started_at = datetime.datetime.utcnow()
+    started_at = datetime.datetime.now(datetime.timezone.utc)
     for suite_, case in enumerate_methods(overall_suite):
         # don't run logrotate beforehand since some ceph daemons might be
         # down and pre/post-rotate scripts in logrotate.conf might fail.
@@ -1271,7 +1285,7 @@ def launch_individually(overall_suite):
                 no_of_tests_failed += 1
 
         no_of_tests_execed += 1
-    time_elapsed = (datetime.datetime.utcnow() - started_at).total_seconds()
+    time_elapsed = (datetime.datetime.now(datetime.timezone.utc) - started_at).total_seconds()
 
     if result.wasSuccessful():
         log.info('')

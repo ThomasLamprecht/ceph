@@ -2,4 +2,4 @@ overrides:
   ceph:
     log-ignorelist:
       - OSD_DOWN
-      - osds down
+      - osd.*is down

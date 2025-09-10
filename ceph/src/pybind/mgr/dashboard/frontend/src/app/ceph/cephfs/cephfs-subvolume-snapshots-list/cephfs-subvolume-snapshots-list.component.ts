@@ -11,7 +11,6 @@ import { CdTableColumn } from '~/app/shared/models/cd-table-column';
 import { CdTableFetchDataContext } from '~/app/shared/models/cd-table-fetch-data-context';
 import { CephfsSubvolume, SubvolumeSnapshot } from '~/app/shared/models/cephfs-subvolume.model';
 import { CephfsSubvolumeSnapshotsFormComponent } from './cephfs-subvolume-snapshots-form/cephfs-subvolume-snapshots-form.component';
-import { ModalService } from '~/app/shared/services/modal.service';
 import { AuthStorageService } from '~/app/shared/services/auth-storage.service';
 import { Permissions } from '~/app/shared/models/permissions';
 import { CdTableSelection } from '~/app/shared/models/cd-table-selection';
@@ -26,7 +25,8 @@ import { NotificationType } from '~/app/shared/enum/notification-type.enum';
 import moment from 'moment';
 import { Validators } from '@angular/forms';
 import { CdValidators } from '~/app/shared/forms/cd-validators';
-import { DEFAULT_SUBVOLUME_GROUP } from '~/app/shared/constants/cephfs';
+import { ModalCdsService } from '~/app/shared/services/modal-cds.service';
+import { DEFAULT_SUBVOLUME_GROUP } from '~/app/shared/constants/cephfs.constant';
 import { DeletionImpact } from '~/app/shared/enum/delete-confirmation-modal-impact.enum';
 
 @Component({
@@ -65,7 +65,7 @@ export class CephfsSubvolumeSnapshotsListComponent implements OnInit, OnChanges 
     private cephfsSubvolumeGroupService: CephfsSubvolumeGroupService,
     private cephfsSubvolumeService: CephfsSubvolumeService,
     private actionLabels: ActionLabelsI18n,
-    private modalService: ModalService,
+    private modalService: ModalCdsService,
     private authStorageService: AuthStorageService,
     private cdDatePipe: CdDatePipe,
     private taskWrapper: TaskWrapperService,
@@ -210,17 +210,13 @@ export class CephfsSubvolumeSnapshotsListComponent implements OnInit, OnChanges 
   }
 
   openModal(edit = false) {
-    this.modalService.show(
-      CephfsSubvolumeSnapshotsFormComponent,
-      {
-        fsName: this.fsName,
-        subVolumeName: this.activeSubVolumeName,
-        subVolumeGroupName: this.activeGroupName,
-        subVolumeGroups: this.subvolumeGroupList,
-        isEdit: edit
-      },
-      { size: 'lg' }
-    );
+    this.modalService.show(CephfsSubvolumeSnapshotsFormComponent, {
+      fsName: this.fsName,
+      subVolumeName: this.activeSubVolumeName,
+      subVolumeGroupName: this.activeGroupName,
+      subVolumeGroups: this.subvolumeGroupList,
+      isEdit: edit
+    });
   }
 
   updateSelection(selection: CdTableSelection) {
@@ -254,7 +250,7 @@ export class CephfsSubvolumeSnapshotsListComponent implements OnInit, OnChanges 
             )
           })
           .subscribe({
-            complete: () => this.modalRef.close(),
+            complete: () => this.modalService.dismissAll(),
             error: () => this.modalRef.componentInstance.stopLoadingSpinner()
           })
     });

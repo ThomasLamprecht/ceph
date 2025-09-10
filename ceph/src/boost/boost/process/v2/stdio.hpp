@@ -103,32 +103,43 @@ struct process_io_binding
 
 
   template<typename Executor>
-  process_io_binding(BOOST_PROCESS_V2_ASIO_NAMESPACE::basic_readable_pipe<Executor> & readable_pipe,
-                     typename std::enable_if<Target != STD_INPUT_HANDLE, Executor*>::type = 0)
+  process_io_binding(net::basic_readable_pipe<Executor> & pipe)
   {
-    BOOST_PROCESS_V2_ASIO_NAMESPACE::detail::native_pipe_handle p[2];
+    if (Target == STD_INPUT_HANDLE)
+    {
+      auto h_ = pipe.native_handle();
+      h = std::unique_ptr<void, handle_closer>{h_, get_flags(h_)};
+      return ;
+    }
+
+    net::detail::native_pipe_handle p[2];
     error_code ec;
-    BOOST_PROCESS_V2_ASIO_NAMESPACE::detail::create_pipe(p, ec);
+    net::detail::create_pipe(p, ec);
     if (ec)
       detail::throw_error(ec, "create_pipe");
       
     h = std::unique_ptr<void, handle_closer>{p[1], true};
-    readable_pipe.assign(p[0]);
+    pipe.assign(p[0]);
   }
 
 
   template<typename Executor>
-  process_io_binding(BOOST_PROCESS_V2_ASIO_NAMESPACE::basic_writable_pipe<Executor> & writable_pipe,
-                     typename std::enable_if<Target == STD_INPUT_HANDLE, Executor*>::type = 0)
+  process_io_binding(net::basic_writable_pipe<Executor> & pipe)
   {
-    BOOST_PROCESS_V2_ASIO_NAMESPACE::detail::native_pipe_handle p[2];
+    if (Target != STD_INPUT_HANDLE)
+    {
+      auto h_ = pipe.native_handle();
+      h = std::unique_ptr<void, handle_closer>{h_, get_flags(h_)};
+      return ;
+    }
+    net::detail::native_pipe_handle p[2];
     error_code ec;
-    BOOST_PROCESS_V2_ASIO_NAMESPACE::detail::create_pipe(p, ec);
+    net::detail::create_pipe(p, ec);
     if (ec)
       detail::throw_error(ec, "create_pipe");
 
     h = std::unique_ptr<void, handle_closer>{p[0], true};
-    writable_pipe.assign(p[1]);
+    pipe.assign(p[1]);
   }
 };
 
@@ -170,17 +181,23 @@ struct process_io_binding
   }
 
   template<typename Executor>
-  process_io_binding(BOOST_PROCESS_V2_ASIO_NAMESPACE::basic_readable_pipe<Executor> & readable_pipe,
-                     typename std::enable_if<Target != STDIN_FILENO, Executor*>::type = 0)
+  process_io_binding(net::basic_readable_pipe<Executor> & readable_pipe)
   {
-    BOOST_PROCESS_V2_ASIO_NAMESPACE::detail::native_pipe_handle p[2];
-    BOOST_PROCESS_V2_ASIO_NAMESPACE::detail::create_pipe(p, ec);
-    if (ec)
+    if (Target == STDIN_FILENO)
+    {
+      fd = readable_pipe.native_handle();
       return ;
+    }
+
+    net::detail::native_pipe_handle p[2];
+    net::detail::create_pipe(p, ec);
+    if (ec)
+      detail::throw_error(ec, "create_pipe");
+
     fd = p[1];
     if (::fcntl(p[0], F_SETFD, FD_CLOEXEC) == -1)
     {
-      BOOST_PROCESS_V2_ASSIGN_LAST_ERROR(ec)
+      BOOST_PROCESS_V2_ASSIGN_LAST_ERROR(ec);
       return ;
     }
     fd_needs_closing = true;
@@ -189,17 +206,24 @@ struct process_io_binding
 
 
   template<typename Executor>
-  process_io_binding(BOOST_PROCESS_V2_ASIO_NAMESPACE::basic_writable_pipe<Executor> & writable_pipe,
-                     typename std::enable_if<Target == STDIN_FILENO, Executor*>::type = 0)
+  process_io_binding(net::basic_writable_pipe<Executor> & writable_pipe)
   {
-    BOOST_PROCESS_V2_ASIO_NAMESPACE::detail::native_pipe_handle p[2];
-    BOOST_PROCESS_V2_ASIO_NAMESPACE::detail::create_pipe(p, ec);
-    if (ec)
+
+    if (Target != STDIN_FILENO)
+    {
+      fd = writable_pipe.native_handle();
       return ;
+    }
+    net::detail::native_pipe_handle p[2];
+    error_code ec;
+    net::detail::create_pipe(p, ec);
+    if (ec)
+      detail::throw_error(ec, "create_pipe");
+
     fd = p[0];
     if (::fcntl(p[1], F_SETFD, FD_CLOEXEC) == -1)
     {
-      BOOST_PROCESS_V2_ASSIGN_LAST_ERROR(ec)
+      BOOST_PROCESS_V2_ASSIGN_LAST_ERROR(ec);
       return ;
     }
     fd_needs_closing = true;

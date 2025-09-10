@@ -12,13 +12,14 @@
  * 
  */
 
+#include "Migrator.h"
 #include "MDSRank.h"
 #include "MDCache.h"
 #include "CInode.h"
 #include "CDir.h"
 #include "CDentry.h"
-#include "Migrator.h"
 #include "Locker.h"
+#include "RetryMessage.h"
 #include "Server.h"
 
 #include "MDBalancer.h"
@@ -27,6 +28,7 @@
 #include "Mutation.h"
 
 #include "include/filepath.h"
+#include "common/debug.h"
 #include "common/likely.h"
 
 #include "events/EExport.h"
@@ -37,6 +39,19 @@
 #include "msg/Messenger.h"
 
 #include "messages/MClientCaps.h"
+#include "messages/MExportCaps.h"
+#include "messages/MExportCapsAck.h"
+#include "messages/MExportDir.h"
+#include "messages/MExportDirAck.h"
+#include "messages/MExportDirCancel.h"
+#include "messages/MExportDirDiscover.h"
+#include "messages/MExportDirDiscoverAck.h"
+#include "messages/MExportDirFinish.h"
+#include "messages/MExportDirNotify.h"
+#include "messages/MExportDirNotifyAck.h"
+#include "messages/MExportDirPrep.h"
+#include "messages/MExportDirPrepAck.h"
+#include "messages/MGatherCaps.h"
 
 /*
  * this is what the dir->dir_auth values look like
@@ -1957,10 +1972,10 @@ void Migrator::handle_export_ack(const cref_t<MExportDirAck> &m)
   // this keeps authority().first in sync with subtree auth state in the journal.
   mdcache->adjust_subtree_auth(dir, it->second.peer, mds->get_nodeid());
 
+  ceph_assert(g_conf()->mds_kill_export_at != 10);
   // log export completion, then finish (unfreeze, trigger finish context, etc.)
   mds->mdlog->submit_entry(le, new C_MDS_ExportFinishLogged(this, dir));
   mds->mdlog->flush();
-  ceph_assert(g_conf()->mds_kill_export_at != 10);
 }
 
 void Migrator::export_notify_abort(CDir *dir, export_state_t& stat, set<CDir*>& bounds)
@@ -2844,7 +2859,6 @@ void Migrator::import_reverse(CDir *dir)
   dout(7) << *dir << dendl;
 
   import_state_t& stat = import_state[dir->dirfrag()];
-  stat.state = IMPORT_ABORTING;
 
   set<CDir*> bounds;
   mdcache->get_subtree_bounds(dir, bounds);
@@ -2950,10 +2964,14 @@ void Migrator::import_reverse(CDir *dir)
       }
       in->put(CInode::PIN_IMPORTINGCAPS);
     }
+  }
+
+  if (stat.state == IMPORT_LOGGINGSTART || stat.state == IMPORT_ACKING) {
     for (auto& p : stat.session_map) {
       Session *session = p.second.first;
       session->dec_importing();
     }
+    mds->server->close_forced_opened_sessions(stat.session_map);
   }
 	 
   // log our failure
@@ -2962,6 +2980,7 @@ void Migrator::import_reverse(CDir *dir)
   mdcache->trim(num_dentries); // try trimming dentries
 
   // notify bystanders; wait in aborting state
+  stat.state = IMPORT_ABORTING;
   import_notify_abort(dir, bounds);
 }
 
@@ -3054,10 +3073,9 @@ void Migrator::import_logged_start(dirfrag_t df, CDir *dir, mds_rank_t from,
   dout(7) << *dir << dendl;
 
   map<dirfrag_t, import_state_t>::iterator it = import_state.find(dir->dirfrag());
-  if (it == import_state.end() ||
-      it->second.state != IMPORT_LOGGINGSTART) {
+  ceph_assert(it != import_state.end());
+  if (it->second.state != IMPORT_LOGGINGSTART) {
     dout(7) << "import " << df << " must have aborted" << dendl;
-    mds->server->finish_force_open_sessions(imported_session_map);
     return;
   }
 

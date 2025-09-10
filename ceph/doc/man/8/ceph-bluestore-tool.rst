@@ -28,9 +28,13 @@ Synopsis
 | **ceph-bluestore-tool** bluefs-bdev-new-db --path *osd path* --dev-target *new-device*
 | **ceph-bluestore-tool** bluefs-bdev-migrate --path *osd path* --dev-target *new-device* --devs-source *device1* [--devs-source *device2*]
 | **ceph-bluestore-tool** free-dump|free-score --path *osd path* [ --allocator block/bluefs-wal/bluefs-db/bluefs-slow ]
+| **ceph-bluestore-tool** bluefs-stats --path *osd path*
+| **ceph-bluestore-tool** bluefs-files --path *osd path*
 | **ceph-bluestore-tool** reshard --path *osd path* --sharding *new sharding* [ --sharding-ctrl *control string* ]
 | **ceph-bluestore-tool** show-sharding --path *osd path*
+| **ceph-bluestore-tool** trim --path *osd path*
 | **ceph-bluestore-tool** zap-device --dev *dev path*
+| **ceph-bluestore-tool** revert-wal-to-plain --path *osd path*
 
 
 Description
@@ -128,6 +132,14 @@ Commands
    Give a [0-1] number that represents quality of fragmentation in allocator.
    0 represents case when all free space is in one chunk. 1 represents worst possible fragmentation.
 
+:command:`bluefs-stats` --path *osd path*
+
+   Shows summary of BlueFS occupied space with split on devices: block/db/wal and roles: wal/log/db.
+
+:command:`bluefs-files` --path *osd path*
+
+   Lists all BlueFS managed files, printing name, size and space used on devices.
+
 :command:`reshard` --path *osd path* --sharding *new sharding* [ --resharding-ctrl *control string* ]
 
    Changes sharding of BlueStore's RocksDB. Sharding is build on top of RocksDB column families.
@@ -143,9 +155,21 @@ Commands
 
    Show sharding that is currently applied to BlueStore's RocksDB.
 
+:command: `trim` --path *osd path*
+
+   An SSD that has been used heavily may experience performance degradation.
+   This operation uses TRIM / discard to free unused blocks from BlueStore and BlueFS block devices,
+   and allows the drive to perform more efficient internal housekeeping.
+   If BlueStore runs with discard enabled, this option may not be useful.
+
 :command: `zap-device` --dev *dev path*
 
    Zeros all device label locations. This effectively makes device appear empty.
+
+:command: `revert-wal-to-plain` --path *osd path*
+
+   Changes WAL files from envelope mode to the legacy plain mode.
+   Useful for downgrades, or if you might want to disable this new feature (bluefs_wal_envelope_mode).
 
 Options
 =======

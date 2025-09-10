@@ -64,7 +64,7 @@ profile can be displayed with this command:
 
    k=2
    m=2
-   plugin=jerasure
+   plugin=isa
    crush-failure-domain=host
    technique=reed_sol_van
 
@@ -253,7 +253,7 @@ tolerable write and recovery performance impact.
      - m=2
      - m=3
      - m=4
-     - m=4
+     - m=5
      - m=6
      - m=7
      - m=8

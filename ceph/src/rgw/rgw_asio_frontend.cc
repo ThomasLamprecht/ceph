@@ -3,6 +3,7 @@
 
 #include <atomic>
 #include <ctime>
+#include <iomanip>
 #include <list>
 #include <memory>
 
@@ -29,6 +30,7 @@
 
 #include "rgw_asio_client.h"
 #include "rgw_asio_frontend.h"
+#include "rgw_asio_thread.h"
 
 #ifdef WITH_RADOSGW_BEAST_OPENSSL
 #include <boost/asio/ssl.hpp>
@@ -322,6 +324,16 @@ void handle_connection(boost::asio::io_context& context,
                                   rgw::io::add_conlen_controlling(
                                     &real_client))));
       RGWRestfulIO client(cct, &real_client_io);
+      // getting ssl_cipher and tls_version
+      if(is_ssl) {
+        ceph_assert(typeid(Stream) == typeid(boost::asio::ssl::stream<tcp::socket&>));
+        const SSL * native_handle = reinterpret_cast<const SSL *>(stream.native_handle());
+        const auto ssl_cipher = SSL_CIPHER_get_name(SSL_get_current_cipher(native_handle));
+        const auto tls_version = SSL_get_version(native_handle);
+        auto& client_env = client.get_env();
+        client_env.set("SSL_CIPHER", ssl_cipher);
+        client_env.set("TLS_VERSION", tls_version);
+      }
       optional_yield y = null_yield;
       if (cct->_conf->rgw_beast_enable_async) {
         y = optional_yield{yield};
@@ -684,8 +696,12 @@ int AsioFrontend::init()
       l.use_nodelay = (nodelay->second == "1");
     }
   }
-  
 
+  bool reuse_port = false;
+  auto reuse_port_it = config.find("so_reuseport");
+  if (reuse_port_it != config.end()) {
+    reuse_port = (reuse_port_it->second == "1");
+  }
   bool socket_bound = false;
   // start listeners
   for (auto& l : listeners) {
@@ -710,7 +726,21 @@ int AsioFrontend::init()
       }
     }
 
-    l.acceptor.set_option(tcp::acceptor::reuse_address(true));
+    if (reuse_port) {
+      // setting option |SO_REUSEPORT| allows running of multiple rgw processes on
+      // the same port. Can read more about the implementation here.
+      // https://web.git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/commit/?id=c617f398edd4db2b8567a28e899a88f8f574798d
+      int one = 1;
+      if (setsockopt(l.acceptor.native_handle(), SOL_SOCKET,
+                     SO_REUSEADDR | SO_REUSEPORT, &one, sizeof(one)) == -1) {
+        lderr(ctx()) << "setsockopt SO_REUSEADDR | SO_REUSEPORT failed:" <<
+ dendl;
+        return -1;
+      }
+    } else {
+      l.acceptor.set_option(tcp::acceptor::reuse_address(true));
+    }
+
     l.acceptor.bind(l.endpoint, ec);
     if (ec) {
       lderr(ctx()) << "failed to bind address " << l.endpoint
@@ -1155,6 +1185,20 @@ void AsioFrontend::stop()
     // signal cancellation of accept()
     listener.signal.emit(boost::asio::cancellation_type::terminal);
   }
+
+  const bool graceful_stop{ g_ceph_context->_conf->rgw_graceful_stop };
+  if (graceful_stop) {
+    ldout(ctx(), 4) << "frontend pausing and waiting for outstanding requests to complete..." << dendl;
+    pause_mutex.lock(ec);
+    if (ec) {
+      ldout(ctx(), 1) << "frontend failed to pause: " << ec.message() << dendl;
+    } else {
+      ldout(ctx(), 4) << "frontend paused" << dendl;
+    }
+    ldout(ctx(), 4) << "frontend outstanding requests have completed" << dendl;
+    pause_mutex.unlock();
+  }
+
   // close all connections
   connections.close(ec);
   pause_mutex.cancel();
@@ -1169,7 +1213,7 @@ void AsioFrontend::join()
 
 void AsioFrontend::pause()
 {
-  ldout(ctx(), 4) << "frontend pausing connections..." << dendl;
+  ldout(ctx(), 4) << "frontend pausing, closing connections..." << dendl;
 
   // cancel pending calls to accept(), but don't close the sockets
   boost::system::error_code ec;
@@ -1179,7 +1223,13 @@ void AsioFrontend::pause()
     l.signal.emit(boost::asio::cancellation_type::terminal);
   }
 
-  // pause and wait for outstanding requests to complete
+  const bool graceful_stop{ g_ceph_context->_conf->rgw_graceful_stop };
+  if (!graceful_stop) {
+    // close all connections so outstanding requests fail quickly
+    connections.close(ec);
+  }
+
+  // pause and wait until outstanding requests complete
   pause_mutex.lock(ec);
 
   if (ec) {

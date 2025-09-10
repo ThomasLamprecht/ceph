@@ -1,15 +1,19 @@
 // -*- mode:C++; tab-width:8; c-basic-offset:2; indent-tabs-mode:t -*-
 // vim: ts=8 sw=2 smarttab
 
-#include <boost/range/adaptor/map.hpp>
-#include <boost/range/algorithm/copy.hpp>
+#include "MetricAggregator.h"
+#include "MDSMap.h"
+#include "MDSRank.h"
+#include "mgr/MgrClient.h"
 
 #include "common/ceph_context.h"
+#include "common/debug.h"
 #include "common/perf_counters_key.h"
 
-#include "MDSRank.h"
-#include "MetricAggregator.h"
-#include "mgr/MgrClient.h"
+#include "messages/MMDSMetrics.h"
+
+#include <boost/range/adaptor/map.hpp>
+#include <boost/range/algorithm/copy.hpp>
 
 #define dout_context g_ceph_context
 #define dout_subsys ceph_subsys_mds
@@ -68,7 +72,7 @@ int MetricAggregator::init() {
 							{"id", stringify(mds->get_global_id())}});
   PerfCountersBuilder plb(m_cct, labels, l_mds_client_metrics_start, l_mds_client_metrics_last);
   plb.add_u64(l_mds_client_metrics_num_clients,
-	      "num_clients", "Numer of client sessions", "mcli", PerfCountersBuilder::PRIO_CRITICAL);
+	      "num_clients", "Number of client sessions", "mcli", PerfCountersBuilder::PRIO_CRITICAL);
   m_perf_counters = plb.create_perf_counters();
   m_cct->get_perfcounters_collection()->add(m_perf_counters);
 

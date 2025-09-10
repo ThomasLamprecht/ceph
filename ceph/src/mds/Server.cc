@@ -12,15 +12,21 @@
  *
  */
 
+#include "Server.h"
+#include "RetryMessage.h"
+#include "RetryRequest.h"
+#include "BatchOp.h"
+
 #include <boost/lexical_cast.hpp>
 #include "include/ceph_assert.h"  // lexical_cast includes system assert.h
+#include "include/cephfs/metrics/Types.h"
+#include "include/random.h" // for ceph::util::generate_random_number()
 
 #include <boost/config/warning_disable.hpp>
 #include <boost/fusion/include/std_pair.hpp>
 #include <boost/range/adaptor/reversed.hpp>
 
 #include "MDSRank.h"
-#include "Server.h"
 #include "Locker.h"
 #include "MDCache.h"
 #include "MDLog.h"
@@ -28,11 +34,20 @@
 #include "MDBalancer.h"
 #include "InoTable.h"
 #include "SnapClient.h"
+#include "SnapRealm.h"
 #include "Mutation.h"
 #include "MetricsHandler.h"
 #include "cephfs_features.h"
 #include "MDSContext.h"
 
+#include "messages/MClientReconnect.h"
+#include "messages/MClientReply.h"
+#include "messages/MClientRequest.h"
+#include "messages/MClientSession.h"
+#include "messages/MClientSnap.h"
+#include "messages/MClientReclaim.h"
+#include "messages/MClientReclaimReply.h"
+#include "messages/MLock.h"
 #include "msg/Messenger.h"
 
 #include "osdc/Objecter.h"
@@ -46,14 +61,13 @@
 
 #include "include/stringify.h"
 #include "include/filepath.h"
-#include "common/errno.h"
+#include "common/ceph_json.h"
+#include "common/debug.h"
 #include "common/Timer.h"
 #include "common/perf_counters.h"
 #include "include/compat.h"
 #include "osd/OSDMap.h"
 #include "fscrypt.h"
-
-#include <errno.h>
 
 #include <list>
 #include <regex>
@@ -266,6 +280,7 @@ Server::Server(MDSRank *m, MetricsHandler *metrics_handler) :
 {
   forward_all_requests_to_auth = g_conf().get_val<bool>("mds_forward_all_requests_to_auth");
   replay_unsafe_with_closed_session = g_conf().get_val<bool>("mds_replay_unsafe_with_closed_session");
+  allow_batched_ops = g_conf().get_val<bool>("mds_allow_batched_ops");
   cap_revoke_eviction_timeout = g_conf().get_val<double>("mds_cap_revoke_eviction_timeout");
   max_snaps_per_dir = g_conf().get_val<uint64_t>("mds_max_snaps_per_dir");
   delegate_inos_pct = g_conf().get_val<uint64_t>("mds_client_delegate_inos_pct");
@@ -275,8 +290,16 @@ Server::Server(MDSRank *m, MetricsHandler *metrics_handler) :
   caps_throttle_retry_request_timeout = g_conf().get_val<double>("mds_cap_acquisition_throttle_retry_request_timeout");
   dir_max_entries = g_conf().get_val<uint64_t>("mds_dir_max_entries");
   bal_fragment_size_max = g_conf().get_val<int64_t>("mds_bal_fragment_size_max");
+  dispatch_client_request_delay = g_conf().get_val<std::chrono::milliseconds>("mds_server_dispatch_client_request_delay");
+  dispatch_killpoint_random = g_conf().get_val<double>("mds_server_dispatch_killpoint_random");
   supported_features = feature_bitset_t(CEPHFS_FEATURES_MDS_SUPPORTED);
   supported_metric_spec = feature_bitset_t(CEPHFS_METRIC_FEATURES_ALL);
+}
+
+Server::~Server() {
+  g_ceph_context->get_perfcounters_collection()->remove(logger);
+  delete logger;
+  delete reconnect_done;
 }
 
 void Server::dispatch(const cref_t<Message> &m)
@@ -472,6 +495,9 @@ void Server::reclaim_session(Session *session, const cref_t<MClientReclaim> &m)
     ceph_assert(!session->reclaiming_from);
     session->reclaiming_from = target;
     reply->set_addrs(entity_addrvec_t(target->info.inst.addr));
+  } else {
+    derr << ": could not find session by uuid:" << m->get_uuid() << dendl;
+    mds->sessionmap.dump();
   }
 
   if (flags & CEPH_RECLAIM_RESET) {
@@ -611,6 +637,9 @@ void Server::handle_client_session(const cref_t<MClientSession> &m)
                                         " <fs_name> refuse_client_session false`";
       mds->send_message(reply, m->get_connection());
       return;
+    }
+    if (!session->client_opened) {
+      session->client_opened = true;
     }
     if (session->is_opening() ||
 	session->is_open() ||
@@ -1051,7 +1080,7 @@ version_t Server::prepare_force_open_sessions(map<client_t,entity_inst_t>& cm,
   return pv;
 }
 
-void Server::finish_force_open_sessions(const map<client_t,pair<Session*,uint64_t> >& smap,
+void Server::finish_force_open_sessions(map<client_t,pair<Session*,uint64_t> >& smap,
 					bool dec_import)
 {
   /*
@@ -1070,7 +1099,7 @@ void Server::finish_force_open_sessions(const map<client_t,pair<Session*,uint64_
 	dout(10) << "force_open_sessions skipping changed " << session->info.inst << dendl;
       } else {
 	dout(10) << "force_open_sessions opened " << session->info.inst << dendl;
-	mds->sessionmap.set_state(session, Session::STATE_OPEN);
+	it.second.second = mds->sessionmap.set_state(session, Session::STATE_OPEN);
 	mds->sessionmap.touch_session(session);
         metrics_handler->add_session(session);
 
@@ -1098,6 +1127,29 @@ void Server::finish_force_open_sessions(const map<client_t,pair<Session*,uint64_
   }
 
   dout(10) << __func__ << ": final v " << mds->sessionmap.get_version() << dendl;
+}
+
+void Server::close_forced_opened_sessions(const map<client_t,pair<Session*,uint64_t> >& smap)
+{
+  dout(10) << __func__ << " on " << smap.size() << " clients" << dendl;
+
+  for (auto &it : smap) {
+    Session *session = it.second.first;
+    uint64_t sseq = it.second.second;
+    if (sseq == 0)
+      continue;
+    if (session->get_state_seq() != sseq) {
+      dout(10) << "skipping changed session (" << session->get_state_name() << ") "
+	       << session->info.inst << dendl;
+      continue;
+    }
+    if (session->client_opened)
+      continue;
+    dout(10) << "closing forced opened session (" << session->get_state_name() << ") "
+	     << session->info.inst << dendl;
+    ceph_assert(!session->is_importing());
+    journal_close_session(session, Session::STATE_CLOSING, NULL);
+  }
 }
 
 class C_MDS_TerminatedSessions : public ServerContext {
@@ -1327,6 +1379,9 @@ void Server::handle_conf_change(const std::set<std::string>& changed) {
   if (changed.count("mds_forward_all_requests_to_auth")){
     forward_all_requests_to_auth = g_conf().get_val<bool>("mds_forward_all_requests_to_auth");
   }
+  if (changed.count("mds_allow_batched_ops")) {
+    allow_batched_ops = g_conf().get_val<bool>("mds_allow_batched_ops");
+  }
   if (changed.count("mds_cap_revoke_eviction_timeout")) {
     cap_revoke_eviction_timeout = g_conf().get_val<double>("mds_cap_revoke_eviction_timeout");
     dout(20) << __func__ << " cap revoke eviction timeout changed to "
@@ -1373,6 +1428,16 @@ void Server::handle_conf_change(const std::set<std::string>& changed) {
   }
   if (changed.count("mds_inject_rename_corrupt_dentry_first")) {
     inject_rename_corrupt_dentry_first = g_conf().get_val<double>("mds_inject_rename_corrupt_dentry_first");
+  }
+  if (changed.count("mds_server_dispatch_client_request_delay")) {
+    dispatch_client_request_delay = g_conf().get_val<std::chrono::milliseconds>("mds_server_dispatch_client_request_delay");
+    dout(20) << __func__ << " mds_server_dispatch_client_request_delay now "
+            << dispatch_client_request_delay << dendl;
+  }
+  if (changed.count("mds_server_dispatch_killpoint_random")) {
+    dispatch_killpoint_random = g_conf().get_val<double>("mds_server_dispatch_killpoint_random");
+    dout(20) << __func__ << " mds_server_dispatch_killpoint_random now "
+            << dispatch_killpoint_random << dendl;
   }
 }
 
@@ -1525,7 +1590,7 @@ void Server::handle_client_reconnect(const cref_t<MClientReconnect> &m)
   }
 
   if (!session->is_open()) {
-    dout(0) << " ignoring msg from not-open session" << *m << dendl;
+    dout(0) << " ignoring msg from not-open session " << *m << dendl;
     auto reply = make_message<MClientSession>(CEPH_SESSION_CLOSE);
     mds->send_message(reply, m->get_connection());
     return;
@@ -2050,7 +2115,7 @@ void Server::journal_and_reply(const MDRequestRef& mdr, CInode *in, CDentry *dn,
     mdr->set_queued_next_replay_op();
     mds->queue_one_replay();
   } else if (mdr->did_early_reply)
-    mds->locker->drop_rdlocks_for_early_reply(mdr.get());
+    mds->locker->handle_locks_for_early_reply(mdr.get());
   else
     mdlog->flush();
 }
@@ -2679,6 +2744,14 @@ void Server::dispatch_client_request(const MDRequestRef& mdr)
   if (logger) logger->inc(l_mdss_dispatch_client_request);
 
   dout(7) << "dispatch_client_request " << *req << dendl;
+
+  auto zeroms = std::chrono::milliseconds::zero();
+  if (unlikely(dispatch_client_request_delay > zeroms)) {
+    std::this_thread::sleep_for(dispatch_client_request_delay);
+  }
+  if (unlikely(dispatch_killpoint_random > 0.0) && dispatch_killpoint_random >= ceph::util::generate_random_number(0.0, 1.0)) {
+    ceph_abort("dispatch_killpoint_random");
+  }
 
   if (req->may_write() && mdcache->is_readonly()) {
     dout(10) << " read-only FS" << dendl;
@@ -4116,7 +4189,7 @@ void Server::handle_client_getattr(const MDRequestRef& mdr, bool is_lookup)
   if (mask & CEPH_STAT_RSTAT)
     want_auth = true; // set want_auth for CEPH_STAT_RSTAT mask
 
-  if (!mdr->is_batch_head() && mdr->can_batch()) {
+  if (!mdr->is_batch_head() && allow_batched_ops && mdr->can_batch()) {
     CF_MDS_RetryRequestFactory cf(mdcache, mdr, false);
     int r = mdcache->path_traverse(mdr, cf, mdr->get_filepath(),
 				   (want_auth ? MDS_TRAVERSE_WANT_AUTH : 0),
@@ -4137,12 +4210,13 @@ void Server::handle_client_getattr(const MDRequestRef& mdr, bool is_lookup)
 
     if (r < 0) {
       // fall-thru. let rdlock_path_pin_ref() check again.
-    } else if (is_lookup) {
+    } else if (is_lookup && mdr->dn[0].size()) {
       CDentry* dn = mdr->dn[0].back();
       mdr->pin(dn);
       auto em = dn->batch_ops.emplace(std::piecewise_construct, std::forward_as_tuple(mask), std::forward_as_tuple());
       if (em.second) {
 	em.first->second = std::make_unique<Batch_Getattr_Lookup>(this, mdr);
+        mdr->mark_event("creating lookup batch head");
       } else {
 	dout(20) << __func__ << ": LOOKUP op, wait for previous same getattr ops to respond. " << *mdr << dendl;
 	em.first->second->add_request(mdr);
@@ -4155,6 +4229,7 @@ void Server::handle_client_getattr(const MDRequestRef& mdr, bool is_lookup)
       auto em = in->batch_ops.emplace(std::piecewise_construct, std::forward_as_tuple(mask), std::forward_as_tuple());
       if (em.second) {
 	em.first->second = std::make_unique<Batch_Getattr_Lookup>(this, mdr);
+        mdr->mark_event("creating getattr batch head");
       } else {
 	dout(20) << __func__ << ": GETATTR op, wait for previous same getattr ops to respond. " << *mdr << dendl;
 	em.first->second->add_request(mdr);
@@ -4242,7 +4317,7 @@ void Server::handle_client_getattr(const MDRequestRef& mdr, bool is_lookup)
   // reply
   dout(10) << "reply to stat on " << *req << dendl;
   mdr->tracei = ref;
-  if (is_lookup)
+  if (is_lookup && mdr->dn[0].size())
     mdr->tracedn = mdr->dn[0].back();
   respond_to_request(mdr, 0);
 }
@@ -4458,7 +4533,6 @@ void Server::_lookup_ino_2(const MDRequestRef& mdr, int r)
 }
 
 
-/* This function takes responsibility for the passed mdr*/
 void Server::handle_client_open(const MDRequestRef& mdr)
 {
   const cref_t<MClientRequest> &req = mdr->client_request;
@@ -4713,7 +4787,6 @@ bool Server::can_handle_charmap(const MDRequestRef& mdr, CDentry* dn)
   return true;
 }
 
-/* This function takes responsibility for the passed mdr*/
 void Server::handle_client_openc(const MDRequestRef& mdr)
 {
   const cref_t<MClientRequest> &req = mdr->client_request;
@@ -6264,11 +6337,10 @@ void Server::handle_client_setvxattr(const MDRequestRef& mdr, CInode *cur)
     client_t exclude_ct = mdr->get_client();
     mdcache->broadcast_quota_to_client(cur, exclude_ct, true);
   } else if (name == "ceph.quiesce.block"sv) {
-    bool val;
-    try {
-      val = boost::lexical_cast<bool>(value);
-    } catch (boost::bad_lexical_cast const&) {
-      dout(10) << "bad vxattr value, unable to parse bool for " << name << dendl;
+    std::string errstr;
+    bool val = strict_strtob(value, &errstr);
+    if (!errstr.empty()) {
+      dout(10) << "bad vxattr value, unable to parse bool for " << name << ": " << errstr << dendl;
       respond_to_request(mdr, -EINVAL);
       return;
     }
@@ -6326,7 +6398,13 @@ void Server::handle_client_setvxattr(const MDRequestRef& mdr, CInode *cur)
 	}
         value = "0";
       }
-      val = boost::lexical_cast<bool>(value);
+      std::string errstr;
+      val = strict_strtob(value, &errstr);
+      if (!errstr.empty()) {
+        dout(10) << "bad vxattr value, unable to parse bool for " << name << ": " << errstr << dendl;
+        respond_to_request(mdr, -EINVAL);
+        return;
+      }
     } catch (boost::bad_lexical_cast const&) {
       dout(10) << "bad vxattr value, unable to parse bool for " << name << dendl;
       respond_to_request(mdr, -EINVAL);
@@ -6475,7 +6553,13 @@ void Server::handle_client_setvxattr(const MDRequestRef& mdr, CInode *cur)
 	}
         value = "0";
       }
-      val = boost::lexical_cast<bool>(value);
+      std::string errstr;
+      val = strict_strtob(value, &errstr);
+      if (!errstr.empty()) {
+        dout(10) << "bad vxattr value, unable to parse bool for " << name << ": " << errstr << dendl;
+        respond_to_request(mdr, -EINVAL);
+        return;
+      }
     } catch (boost::bad_lexical_cast const&) {
       dout(10) << "bad vxattr value, unable to parse bool for " << name << dendl;
       respond_to_request(mdr, -EINVAL);
@@ -6502,11 +6586,7 @@ void Server::handle_client_setvxattr(const MDRequestRef& mdr, CInode *cur)
     if (!xlock_policylock(mdr, cur, false, false, std::move(lov)))
       return;
 
-    if (_dir_is_nonempty(mdr, cur)) {
-      respond_to_request(mdr, -ENOTEMPTY);
-      return;
-    }
-    if (cur->snaprealm && cur->snaprealm->srnode.snaps.size()) {
+    if (_dir_is_nonempty(mdr, cur) || _dir_has_snaps(mdr, cur)) {
       respond_to_request(mdr, -ENOTEMPTY);
       return;
     }
@@ -6534,20 +6614,15 @@ void Server::handle_client_setvxattr(const MDRequestRef& mdr, CInode *cur)
     if (!xlock_policylock(mdr, cur, false, false, std::move(lov)))
       return;
 
-    if (_dir_is_nonempty(mdr, cur)) {
-      respond_to_request(mdr, -ENOTEMPTY);
-      return;
-    }
-    if (cur->snaprealm && cur->snaprealm->srnode.snaps.size()) {
+    if (_dir_is_nonempty(mdr, cur) || _dir_has_snaps(mdr, cur)) {
       respond_to_request(mdr, -ENOTEMPTY);
       return;
     }
 
-    bool val;
-    try {
-      val = boost::lexical_cast<bool>(value);
-    } catch (boost::bad_lexical_cast const&) {
-      dout(10) << "bad vxattr value, unable to parse bool for " << name << dendl;
+    std::string errstr;
+    bool val = strict_strtob(value, &errstr);
+    if (!errstr.empty()) {
+      dout(10) << "bad vxattr value, unable to parse bool for " << name << ": " << errstr << dendl;
       respond_to_request(mdr, -EINVAL);
       return;
     }
@@ -6572,11 +6647,7 @@ void Server::handle_client_setvxattr(const MDRequestRef& mdr, CInode *cur)
     if (!xlock_policylock(mdr, cur, false, false, std::move(lov)))
       return;
 
-    if (_dir_is_nonempty(mdr, cur)) {
-      respond_to_request(mdr, -ENOTEMPTY);
-      return;
-    }
-    if (cur->snaprealm && cur->snaprealm->srnode.snaps.size()) {
+    if (_dir_is_nonempty(mdr, cur) || _dir_has_snaps(mdr, cur)) {
       respond_to_request(mdr, -ENOTEMPTY);
       return;
     }
@@ -6600,11 +6671,7 @@ void Server::handle_client_setvxattr(const MDRequestRef& mdr, CInode *cur)
     if (!xlock_policylock(mdr, cur, false, false, std::move(lov)))
       return;
 
-    if (_dir_is_nonempty(mdr, cur)) {
-      respond_to_request(mdr, -ENOTEMPTY);
-      return;
-    }
-    if (cur->snaprealm && cur->snaprealm->srnode.snaps.size()) {
+    if (_dir_is_nonempty(mdr, cur) || _dir_has_snaps(mdr, cur)) {
       respond_to_request(mdr, -ENOTEMPTY);
       return;
     }
@@ -7348,7 +7415,6 @@ void Server::handle_client_mknod(const MDRequestRef& mdr)
 
 
 // MKDIR
-/* This function takes responsibility for the passed mdr*/
 void Server::handle_client_mkdir(const MDRequestRef& mdr)
 {
   const cref_t<MClientRequest> &req = mdr->client_request;
@@ -8908,6 +8974,16 @@ bool Server::_dir_is_nonempty_unlocked(const MDRequestRef& mdr, CInode *in)
   return false;
 }
 
+bool Server::_dir_has_snaps(const MDRequestRef& mdr, CInode *diri)
+{
+  dout(10) << __func__ << ": " << *diri << dendl;
+  ceph_assert(diri->is_auth());
+  ceph_assert(diri->snaplock.can_read(mdr->get_client()));
+
+  SnapRealm *realm = diri->find_snaprealm();
+  return !realm->get_snaps().empty();
+}
+
 bool Server::_dir_is_nonempty(const MDRequestRef& mdr, CInode *in)
 {
   dout(10) << "dir_is_nonempty " << *in << dendl;
@@ -8966,8 +9042,6 @@ public:
  * all other nodes have also replciated destdn and straydn.  note that
  * destdn replicas need not also replicate srci.  this only works when 
  * destdn is leader.
- *
- * This function takes responsibility for the passed mdr.
  */
 void Server::handle_client_rename(const MDRequestRef& mdr)
 {
@@ -11116,7 +11190,6 @@ void Server::_peer_rename_sessions_flushed(const MDRequestRef& mdr)
 }
 
 // snaps
-/* This function takes responsibility for the passed mdr*/
 void Server::handle_client_lssnap(const MDRequestRef& mdr)
 {
   const cref_t<MClientRequest> &req = mdr->client_request;
@@ -11226,7 +11299,6 @@ struct C_MDS_mksnap_finish : public ServerLogContext {
   }
 };
 
-/* This function takes responsibility for the passed mdr*/
 void Server::handle_client_mksnap(const MDRequestRef& mdr)
 {
   const cref_t<MClientRequest> &req = mdr->client_request;
@@ -11423,7 +11495,6 @@ struct C_MDS_rmsnap_finish : public ServerLogContext {
   }
 };
 
-/* This function takes responsibility for the passed mdr*/
 void Server::handle_client_rmsnap(const MDRequestRef& mdr)
 {
   const cref_t<MClientRequest> &req = mdr->client_request;
@@ -11553,7 +11624,6 @@ struct C_MDS_renamesnap_finish : public ServerLogContext {
   }
 };
 
-/* This function takes responsibility for the passed mdr*/
 void Server::handle_client_renamesnap(const MDRequestRef& mdr)
 {
   const cref_t<MClientRequest> &req = mdr->client_request;

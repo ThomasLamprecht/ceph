@@ -42,6 +42,7 @@
 #include <seastar/net/ip.hh>
 #include <seastar/net/const.hh>
 #include <seastar/net/packet-util.hh>
+#include <seastar/util/assert.hh>
 #include <seastar/util/std-compat.hh>
 
 namespace seastar {
@@ -738,9 +739,7 @@ public:
             }
         }
         future<connection> accept() {
-            return _q.not_empty().then([this] {
-                return make_ready_future<connection>(_q.pop());
-            });
+            return _q.pop_eventually();
         }
         void abort_accept() {
             _q.abort(std::make_exception_ptr(std::system_error(ECONNABORTED, std::system_category())));
@@ -1732,7 +1731,7 @@ void tcp<InetTraits>::tcb::output_one(bool data_retransmit) {
     // if advertised TCP receive window is 0 we may only transmit zero window probing segment.
     // Payload size of this segment is 1. Queueing anything bigger when _snd.window == 0 is bug
     // and violation of RFC
-    assert((_snd.window > 0) || ((_snd.window == 0) && (len <= 1)));
+    SEASTAR_ASSERT((_snd.window > 0) || ((_snd.window == 0) && (len <= 1)));
     queue_packet(std::move(p));
 }
 
@@ -2096,7 +2095,7 @@ tcp_seq tcp<InetTraits>::tcb::get_isn() {
     gnutls_hash(md5_hash_handle, hash, 3 * sizeof(hash[0]));
     gnutls_hash(md5_hash_handle, _isn_secret.key, sizeof(_isn_secret.key));
     // reuse "hash" for the output of digest
-    assert(sizeof(hash) == gnutls_hash_get_len(GNUTLS_DIG_MD5));
+    SEASTAR_ASSERT(sizeof(hash) == gnutls_hash_get_len(GNUTLS_DIG_MD5));
     gnutls_hash_deinit(md5_hash_handle, hash);
     auto seq = hash[0];
     auto m = duration_cast<microseconds>(clock_type::now().time_since_epoch());
@@ -2115,7 +2114,7 @@ std::optional<typename InetTraits::l4packet> tcp<InetTraits>::tcb::get_packet() 
         return std::optional<typename InetTraits::l4packet>();
     }
 
-    assert(!_packetq.empty());
+    SEASTAR_ASSERT(!_packetq.empty());
 
     auto p = std::move(_packetq.front());
     _packetq.pop_front();

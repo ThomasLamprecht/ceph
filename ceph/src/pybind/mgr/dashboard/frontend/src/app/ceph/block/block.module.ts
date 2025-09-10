@@ -3,9 +3,8 @@ import { NgModule } from '@angular/core';
 import { FormsModule, ReactiveFormsModule } from '@angular/forms';
 import { RouterModule, Routes } from '@angular/router';
 
-import { TreeModule } from '@circlon/angular-tree-component';
 import { NgbNavModule, NgbPopoverModule, NgbTooltipModule } from '@ng-bootstrap/ng-bootstrap';
-import { NgxPipeFunctionModule } from 'ngx-pipe-function';
+import { PipesModule } from '~/app/shared/pipes/pipes.module';
 
 import { ActionLabels, URLVerbs } from '~/app/shared/constants/app.constants';
 import { FeatureTogglesGuardService } from '~/app/shared/services/feature-toggles-guard.service';
@@ -50,6 +49,31 @@ import { NvmeofNamespacesFormComponent } from './nvmeof-namespaces-form/nvmeof-n
 import { NvmeofInitiatorsListComponent } from './nvmeof-initiators-list/nvmeof-initiators-list.component';
 import { NvmeofInitiatorsFormComponent } from './nvmeof-initiators-form/nvmeof-initiators-form.component';
 
+import {
+  ButtonModule,
+  CheckboxModule,
+  ComboBoxModule,
+  DatePickerModule,
+  GridModule,
+  IconModule,
+  IconService,
+  InputModule,
+  ModalModule,
+  NumberModule,
+  RadioModule,
+  SelectModule,
+  UIShellModule,
+  TreeviewModule,
+  TabsModule
+} from 'carbon-components-angular';
+
+// Icons
+import ChevronDown from '@carbon/icons/es/chevron--down/16';
+import Close from '@carbon/icons/es/close/32';
+import AddFilled from '@carbon/icons/es/add--filled/32';
+import SubtractFilled from '@carbon/icons/es/subtract--filled/32';
+import Reset from '@carbon/icons/es/reset/32';
+
 @NgModule({
   imports: [
     CommonModule,
@@ -59,10 +83,23 @@ import { NvmeofInitiatorsFormComponent } from './nvmeof-initiators-form/nvmeof-i
     NgbNavModule,
     NgbPopoverModule,
     NgbTooltipModule,
-    NgxPipeFunctionModule,
+    PipesModule,
     SharedModule,
     RouterModule,
-    TreeModule
+    TreeviewModule,
+    UIShellModule,
+    InputModule,
+    GridModule,
+    ButtonModule,
+    IconModule,
+    CheckboxModule,
+    RadioModule,
+    SelectModule,
+    NumberModule,
+    ModalModule,
+    DatePickerModule,
+    ComboBoxModule,
+    TabsModule
   ],
   declarations: [
     RbdListComponent,
@@ -103,7 +140,11 @@ import { NvmeofInitiatorsFormComponent } from './nvmeof-initiators-form/nvmeof-i
   ],
   exports: [RbdConfigurationListComponent, RbdConfigurationFormComponent]
 })
-export class BlockModule {}
+export class BlockModule {
+  constructor(private iconService: IconService) {
+    this.iconService.registerAll([ChevronDown, Close, AddFilled, SubtractFilled, Reset]);
+  }
+}
 
 /* The following breakdown is needed to allow importing block.module without
     the routes (e.g.: this module is imported by pool.module for RBD QoS

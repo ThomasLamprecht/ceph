@@ -389,6 +389,11 @@ public:
 
 /// @}
 
+/// Options for creating a listening socket.
+///
+/// WARNING: these options currently only have an effect when using
+/// the POSIX stack: all options are ignored on the native stack as they
+/// are not implemented there.
 struct listen_options {
     bool reuse_address = false;
     server_socket::load_balancing_algorithm lba = server_socket::load_balancing_algorithm::default_;
@@ -396,6 +401,19 @@ struct listen_options {
     int listen_backlog = 100;
     unsigned fixed_cpu = 0u;
     std::optional<file_permissions> unix_domain_socket_permissions;
+
+    /// If set, the SO_SNDBUF size will be set to the given value on the listening socket
+    /// via setsockopt. This buffer size is inherited by the sockets returned by
+    /// accept and is the preferred way to set the buffer size for these sockets since
+    /// setting it directly on the already-accepted socket is ineffective (see TCP(7)).
+    std::optional<int> so_sndbuf;
+
+    /// If set, the SO_RCVBUF size will be set to the given value on the listening socket
+    /// via setsockopt. This buffer size is inherited by the sockets returned by
+    /// accept and is the preferred way to set the buffer size for these sockets since
+    /// setting it directly on the already-accepted socket is ineffective (see TCP(7)).
+    std::optional<int> so_rcvbuf;
+
     void set_fixed_cpu(unsigned cpu) {
         lba = server_socket::load_balancing_algorithm::fixed;
         fixed_cpu = cpu;
@@ -426,6 +444,19 @@ public:
     bool supports_ipv6() const;
 };
 
+struct statistics {
+    uint64_t bytes_sent = 0;
+    uint64_t bytes_received = 0;
+};
+
+namespace metrics {
+class metric_groups;
+class label_instance;
+}
+
+void register_net_metrics_for_scheduling_group(
+    metrics::metric_groups& m, unsigned sg_id, const metrics::label_instance& name);
+
 class network_stack {
 public:
     virtual ~network_stack() {}
@@ -450,8 +481,13 @@ public:
         return false;
     }
 
-    /** 
-     * Returns available network interfaces. This represents a 
+    // Return network stats (bytes sent/received etc.) for this stack and scheduling group
+    virtual statistics stats(unsigned scheduling_group_id) = 0;
+    // Clears the stats for this stack and scheduling group
+    virtual void clear_stats(unsigned scheduling_group_id) = 0;
+
+    /**
+     * Returns available network interfaces. This represents a
      * snapshot of interfaces available at call time, hence the
      * return by value.
      */

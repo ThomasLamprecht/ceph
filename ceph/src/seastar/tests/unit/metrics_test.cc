@@ -31,10 +31,12 @@
 #include <seastar/core/io_queue.hh>
 #include <seastar/core/loop.hh>
 #include <seastar/core/internal/estimated_histogram.hh>
+#include <seastar/testing/random.hh>
 #include <seastar/testing/test_case.hh>
 #include <seastar/testing/thread_test_case.hh>
 #include <seastar/testing/test_runner.hh>
 #include <boost/range/irange.hpp>
+#include <ranges>
 
 SEASTAR_TEST_CASE(test_add_group) {
     using namespace seastar::metrics;
@@ -66,8 +68,8 @@ static std::set<seastar::sstring> get_label_values(seastar::sstring metric_name,
     BOOST_REQUIRE(qp_group != cend(all_metadata));
     std::set<seastar::sstring> labels;
     for (const auto& metric : qp_group->metrics) {
-        const auto found = metric.id.labels().find(label_name);
-        BOOST_REQUIRE(found != metric.id.labels().cend());
+        const auto found = metric.labels().find(label_name);
+        BOOST_REQUIRE(found != metric.labels().cend());
         labels.insert(found->second);
     }
     return labels;
@@ -83,7 +85,7 @@ SEASTAR_THREAD_TEST_CASE(test_renaming_scheuling_groups) {
     static const char* name1 = "A";
     static const char* name2 = "B";
     scheduling_group sg =  create_scheduling_group("hello", 111).get();
-    boost::integer_range<int> rng(0, 1000);
+    auto rng = std::views::iota(0, 1000);
     // repeatedly change the group name back and forth in
     // decresing time intervals to see if it generate double
     //registration statistics errors.
@@ -119,65 +121,12 @@ SEASTAR_THREAD_TEST_CASE(test_renaming_scheuling_groups) {
     BOOST_REQUIRE((name1_found && !name2_found) || (name2_found && !name1_found));
 }
 
-#if SEASTAR_API_LEVEL < 7
-SEASTAR_THREAD_TEST_CASE(test_renaming_io_priority_classes) {
-    // this seams a little bit out of place but the
-    // renaming functionality is primarily for statistics
-    // otherwise those classes could have just been reused
-    // without renaming them.
-    using namespace seastar;
-    static const char* name1 = "A";
-    static const char* name2 = "B";
-    seastar::io_priority_class pc = io_priority_class::register_one("hello",100);
-    smp::invoke_on_all([&pc] () {
-        // this is a trick to get all of the queues actually register their
-        // stats.
-        return pc.update_shares(101);
-    }).get();
-
-    boost::integer_range<int> rng(0, 1000);
-    // repeatedly change the group name back and forth in
-    // decresing time intervals to see if it generate double
-    //registration statistics errors.
-    for (auto&& i : rng) {
-        const char* name = i%2 ? name1 : name2;
-        const char* prev_name = i%2 ? name2 : name1;
-        sleep(std::chrono::microseconds(100000/(i+1))).get();
-        pc.rename(name).get();
-        std::set<sstring> label_vals = get_label_values(sstring("io_queue_shares"), sstring("class"));
-        // validate that the name that we *renamed to* is in the stats
-        BOOST_REQUIRE(label_vals.find(sstring(name)) != label_vals.end());
-        // validate that the name that we *renamed from* is *not* in the stats
-        BOOST_REQUIRE(label_vals.find(sstring(prev_name)) == label_vals.end());
-    }
-
-    smp::invoke_on_all([&pc] () {
-        return do_with(std::uniform_int_distribution<int>(), boost::irange<int>(0, 1000),
-                [&pc] (std::uniform_int_distribution<int>& dist, boost::integer_range<int>& rng) {
-            // flip a fair coin and rename to one of two options and rename to that
-            // scheduling group name, do it 1000 in parallel on all shards so there
-            // is a chance of collision.
-            return do_for_each(rng, [&pc, &dist] (auto i) {
-                bool odd = dist(seastar::testing::local_random_engine)%2;
-                return pc.rename(odd ? name1 : name2);
-            });
-        });
-    }).get();
-
-    std::set<sstring> label_vals = get_label_values(sstring("io_queue_shares"), sstring("class"));
-    // validate that only one of the names is eventually in the metrics
-    bool name1_found = label_vals.find(sstring(name1)) != label_vals.end();
-    bool name2_found = label_vals.find(sstring(name2)) != label_vals.end();
-    BOOST_REQUIRE((name1_found && !name2_found) || (name2_found && !name1_found));
-}
-#endif
-
 int count_by_label(const std::string& label) {
     seastar::foreign_ptr<seastar::metrics::impl::values_reference> values = seastar::metrics::impl::get_values();
     int count = 0;
     for (auto&& md : (*values->metadata)) {
         for (auto&& mi : md.metrics) {
-            if (label == "" || mi.id.labels().find(label) != mi.id.labels().end()) {
+            if (label == "" || mi.labels().find(label) != mi.labels().end()) {
                 count++;
             }
         }
@@ -185,7 +134,7 @@ int count_by_label(const std::string& label) {
     return count;
 }
 
-int count_by_fun(std::function<bool(const seastar::metrics::impl::metric_info&)> f) {
+int count_by_fun(std::function<bool(const seastar::metrics::impl::metric_series_metadata&)> f) {
     seastar::foreign_ptr<seastar::metrics::impl::values_reference> values = seastar::metrics::impl::get_values();
     int count = 0;
     for (auto&& md : (*values->metadata)) {
@@ -336,8 +285,8 @@ SEASTAR_THREAD_TEST_CASE(test_relabel_enable_disable_skip_when_empty) {
     sm::metric_relabeling_result success = sm::set_relabel_configs(rl).get();
     BOOST_CHECK_EQUAL(success.metrics_relabeled_due_to_collision, 0);
     BOOST_CHECK_EQUAL(count_by_label(""), 3);
-    BOOST_CHECK_EQUAL(count_by_fun([](const seastar::metrics::impl::metric_info& mi) {
-        return mi.should_skip_when_empty == sm::skip_when_empty::yes;
+    BOOST_CHECK_EQUAL(count_by_fun([](const seastar::metrics::impl::metric_series_metadata& mi) {
+        return mi.should_skip_when_empty() == sm::skip_when_empty::yes;
     }), 0);
 
     std::vector<sm::relabel_config> rl2(3);
@@ -355,8 +304,8 @@ SEASTAR_THREAD_TEST_CASE(test_relabel_enable_disable_skip_when_empty) {
     success = sm::set_relabel_configs(rl2).get();
     BOOST_CHECK_EQUAL(success.metrics_relabeled_due_to_collision, 0);
     BOOST_CHECK_EQUAL(count_by_label(""), 3);
-    BOOST_CHECK_EQUAL(count_by_fun([](const seastar::metrics::impl::metric_info& mi) {
-        return mi.should_skip_when_empty == sm::skip_when_empty::yes;
+    BOOST_CHECK_EQUAL(count_by_fun([](const seastar::metrics::impl::metric_series_metadata& mi) {
+        return mi.should_skip_when_empty() == sm::skip_when_empty::yes;
     }), 3);
     // clear the configuration
     success = sm::set_relabel_configs({}).get();
@@ -377,8 +326,8 @@ SEASTAR_THREAD_TEST_CASE(test_relabel_enable_disable_skip_when_empty) {
 
     success = sm::set_relabel_configs(rl3).get();
     BOOST_CHECK_EQUAL(success.metrics_relabeled_due_to_collision, 0);
-    BOOST_CHECK_EQUAL(count_by_fun([](const seastar::metrics::impl::metric_info& mi) {
-        return mi.should_skip_when_empty == sm::skip_when_empty::yes;
+    BOOST_CHECK_EQUAL(count_by_fun([](const seastar::metrics::impl::metric_series_metadata& mi) {
+        return mi.should_skip_when_empty() == sm::skip_when_empty::yes;
     }), 0);
     sm::set_relabel_configs({}).get();
 }
