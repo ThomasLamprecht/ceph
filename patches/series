@@ -11,7 +11,6 @@
 0013-disable-elastic_shared_blob-to-prevent-crashing-OSDs.patch
 0017-d-rules-disable-jaeger-telemetry.patch
 0021-d-py3dist-drop-python3-distutils-not-available-in-De.patch
-0022-pybind-mgr-replace-imports-of-distutils.util.patch
 0023-debian-radosgw-add-media-types-packages-as-alternati.patch
 0024-ceph-volume-fix-importlib.metadata-compat.patch
 0025-debian-do-not-ship-legacy-init.d-ceph-script-anymore.patch
