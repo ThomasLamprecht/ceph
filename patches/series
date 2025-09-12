@@ -9,7 +9,6 @@
 0010-ceph-crash-change-order-of-client-names.patch
 0011-debian-pkg-record-python3-packaging-dependency-for-c.patch
 0013-disable-elastic_shared_blob-to-prevent-crashing-OSDs.patch
-0015-mgr-set-argv-for-python-in-PyModuleRegistry.patch
 0016-mgr-add-site-package-paths-in-PyModuleRegistry.patch
 0017-d-rules-disable-jaeger-telemetry.patch
 0018-fix-build-for-Apache-Arrow-15.0.0.-on-Debian.patch
