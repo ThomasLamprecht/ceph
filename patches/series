@@ -6,7 +6,6 @@
 0006-fix-4759-run-ceph-crash-daemon-with-www-data-group-f.patch
 0007-fix-compatibility-with-CPUs-not-supporting-SSE-4.1-i.patch
 0008-ceph-osd-postinst-do-not-always-reload-all-sysctl-se.patch
-0009-debian-recursively-adjust-permissions-of-var-lib-cep.patch
 0010-ceph-crash-change-order-of-client-names.patch
 0011-debian-pkg-record-python3-packaging-dependency-for-c.patch
 0012-d-control-fix-lua-dependencies-for-librgw2.patch
