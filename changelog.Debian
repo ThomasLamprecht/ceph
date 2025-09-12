@@ -1,3 +1,9 @@
+ceph (20.1.0-pve1) UNRELEASED; urgency=medium
+
+  * WIP build of first Ceph 20 Tentacle release candidate.
+
+ -- Proxmox Support Team <support@proxmox.com>  Fri, 12 Sep 2025 19:00:16 +0200
+
 ceph (19.2.3-pve2) trixie; urgency=medium
 
   * pybind/rbd: disable on_progress callbacks to prevent MGR segfaults related
