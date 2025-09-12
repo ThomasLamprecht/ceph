@@ -36,7 +36,6 @@
 0047-python-common-cryptotools-catch-all-failures-to-read.patch
 0048-mgr-cephadm-always-use-the-internal-cryptocaller.patch
 0049-mgr-dashboard-add-an-option-to-control-the-dashboard.patch
-0050-pybind-mgr-restful-provide-workaround-for-PyO3-Impor.patch
 0051-mgr-fix-module-import-by-making-NOTIFY_TYPES-in-py-m.patch
 0052-mgr-osd_perf_query-fix-ivalid-escape-sequence.patch
 0053-mgr-zabbix-fix-invalid-escape-sequences.patch
