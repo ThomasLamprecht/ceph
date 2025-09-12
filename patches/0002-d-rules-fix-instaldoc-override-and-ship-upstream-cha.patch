@@ -10,15 +10,16 @@ by MISTAKE in uptream commit c3a53010af432e77f74bcb46e7205c5500b6af77,
 fix that by just dropping it completely.
 
 Signed-off-by: Thomas Lamprecht <t.lamprecht@proxmox.com>
+Signed-off-by: Max R. Carrara <m.carrara@proxmox.com>
 ---
  debian/rules | 2 +-
  1 file changed, 1 insertion(+), 1 deletion(-)
 
 diff --git a/debian/rules b/debian/rules
-index 3fbed3f3a2e..e050ccb1955 100755
+index b935efaa8cd..48f2aad2e1b 100755
 --- a/debian/rules
 +++ b/debian/rules
-@@ -81,7 +81,7 @@ override_dh_auto_install:
+@@ -88,7 +88,7 @@ override_dh_auto_install:
  
  # doc/changelog is a directory, which confuses dh_installchangelogs
  override_dh_installchangelogs:

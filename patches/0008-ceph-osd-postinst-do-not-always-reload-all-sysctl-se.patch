@@ -22,12 +22,13 @@ will need to be adjusted to apply the sysctl settings on upgrade too.
 Suggested-by: Fabian Grünbichler <f.gruenbichler@proxmox.com>
 Signed-off-by: Friedrich Weber <f.weber@proxmox.com>
 Signed-off-by: Thomas Lamprecht <t.lamprecht@proxmox.com>
+Signed-off-by: Max R. Carrara <m.carrara@proxmox.com>
 ---
  debian/ceph-osd.postinst | 6 +++++-
  1 file changed, 5 insertions(+), 1 deletion(-)
 
 diff --git a/debian/ceph-osd.postinst b/debian/ceph-osd.postinst
-index 04e33b8601f..2bcd8d4dcb4 100644
+index be99d1d2651..4abee9213cc 100644
 --- a/debian/ceph-osd.postinst
 +++ b/debian/ceph-osd.postinst
 @@ -24,7 +24,11 @@ set -e
@@ -40,6 +41,6 @@ index 04e33b8601f..2bcd8d4dcb4 100644
 +	    /lib/systemd/systemd-sysctl /etc/sysctl.d/30-ceph-osd.conf \
 +		    >/dev/null || :
 +	fi
- 	[ -x /sbin/start ] && start ceph-osd-all || :
      ;;
      abort-upgrade|abort-remove|abort-deconfigure)
+ 	:

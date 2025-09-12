@@ -5,6 +5,7 @@ Subject: [PATCH] python-common/cryptotools: add caller module for base class
 
 Signed-off-by: John Mulligan <jmulligan@redhat.com>
 Signed-off-by: Thomas Lamprecht <t.lamprecht@proxmox.com>
+Signed-off-by: Max R. Carrara <m.carrara@proxmox.com>
 ---
  src/python-common/ceph/cryptotools/caller.py | 48 ++++++++++++++++++++
  1 file changed, 48 insertions(+)

@@ -8,6 +8,7 @@ Name the parser objects after their functions and not `foo` and `bar`.
 
 Signed-off-by: John Mulligan <jmulligan@redhat.com>
 Signed-off-by: Thomas Lamprecht <t.lamprecht@proxmox.com>
+Signed-off-by: Max R. Carrara <m.carrara@proxmox.com>
 ---
  .../ceph/cryptotools/cryptotools.py           | 26 +++++++++----------
  1 file changed, 12 insertions(+), 14 deletions(-)

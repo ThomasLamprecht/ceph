@@ -8,6 +8,7 @@ and interaction with the parent process.
 
 Signed-off-by: John Mulligan <jmulligan@redhat.com>
 Signed-off-by: Thomas Lamprecht <t.lamprecht@proxmox.com>
+Signed-off-by: Max R. Carrara <m.carrara@proxmox.com>
 ---
  .../ceph/pybind/mgr/cryptotools.py            | 21 ++++++++++---------
  1 file changed, 11 insertions(+), 10 deletions(-)

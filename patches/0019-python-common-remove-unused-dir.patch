@@ -5,6 +5,7 @@ Subject: [PATCH] python-common: remove unused dir
 
 Signed-off-by: John Mulligan <jmulligan@redhat.com>
 Signed-off-by: Thomas Lamprecht <t.lamprecht@proxmox.com>
+Signed-off-by: Max R. Carrara <m.carrara@proxmox.com>
 ---
  src/python-common/ceph/pybind/__init__.py     | 0
  src/python-common/ceph/pybind/mgr/__init__.py | 0

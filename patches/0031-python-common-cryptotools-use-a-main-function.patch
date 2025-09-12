@@ -8,6 +8,7 @@ of code in module scope.
 
 Signed-off-by: John Mulligan <jmulligan@redhat.com>
 Signed-off-by: Thomas Lamprecht <t.lamprecht@proxmox.com>
+Signed-off-by: Max R. Carrara <m.carrara@proxmox.com>
 ---
  src/python-common/ceph/cryptotools/cryptotools.py | 14 +++++++++++---
  1 file changed, 11 insertions(+), 3 deletions(-)

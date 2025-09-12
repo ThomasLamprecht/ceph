@@ -10,6 +10,7 @@ fails gracefully. Always parse that function in the crypto caller class.
 
 Signed-off-by: John Mulligan <jmulligan@redhat.com>
 Signed-off-by: Thomas Lamprecht <t.lamprecht@proxmox.com>
+Signed-off-by: Max R. Carrara <m.carrara@proxmox.com>
 ---
  src/python-common/ceph/cryptotools/cryptotools.py | 6 +++---
  src/python-common/ceph/cryptotools/remote.py      | 3 ++-

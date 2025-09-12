@@ -10,12 +10,13 @@ it doesn't seem worth to try fixing this.
 [0]: https://github.com/open-telemetry/opentelemetry-cpp/pull/2031
 
 Signed-off-by: Thomas Lamprecht <t.lamprecht@proxmox.com>
+Signed-off-by: Max R. Carrara <m.carrara@proxmox.com>
 ---
  debian/rules | 2 +-
  1 file changed, 1 insertion(+), 1 deletion(-)
 
 diff --git a/debian/rules b/debian/rules
-index e050ccb1955..fcbabb12f82 100755
+index 48f2aad2e1b..fa7e55b03be 100755
 --- a/debian/rules
 +++ b/debian/rules
 @@ -21,7 +21,7 @@ ifneq ($(filter pkg.ceph.arrow,$(DEB_BUILD_PROFILES)),)

@@ -6,6 +6,7 @@ Subject: [PATCH] python-common/cryptotools: Remove ascii and utf-8 references
 
 Signed-off-by: Paulo E. Castro <pecastro@wormholenet.com>
 Signed-off-by: Thomas Lamprecht <t.lamprecht@proxmox.com>
+Signed-off-by: Max R. Carrara <m.carrara@proxmox.com>
 ---
  src/python-common/ceph/cryptotools/cryptotools.py | 14 +++++++-------
  src/python-common/ceph/cryptotools/remote.py      |  4 ++--

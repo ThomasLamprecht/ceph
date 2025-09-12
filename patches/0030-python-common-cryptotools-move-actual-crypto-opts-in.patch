@@ -9,6 +9,7 @@ to centralize the functions that actually use the crypto libs.
 
 Signed-off-by: John Mulligan <jmulligan@redhat.com>
 Signed-off-by: Thomas Lamprecht <t.lamprecht@proxmox.com>
+Signed-off-by: Max R. Carrara <m.carrara@proxmox.com>
 ---
  .../ceph/cryptotools/cryptotools.py           | 247 ++++++++++--------
  1 file changed, 140 insertions(+), 107 deletions(-)

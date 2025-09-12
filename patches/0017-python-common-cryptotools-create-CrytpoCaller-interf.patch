@@ -11,6 +11,7 @@ the external function calls in different ways in the future.
 
 Signed-off-by: John Mulligan <jmulligan@redhat.com>
 Signed-off-by: Thomas Lamprecht <t.lamprecht@proxmox.com>
+Signed-off-by: Max R. Carrara <m.carrara@proxmox.com>
 ---
  .../ceph/cryptotools/__init__.py              |   0
  src/python-common/ceph/cryptotools/remote.py  | 169 ++++++++++++++++++

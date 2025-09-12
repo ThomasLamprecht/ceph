@@ -10,16 +10,17 @@ values are `internal` and `remote`.
 
 Signed-off-by: John Mulligan <jmulligan@redhat.com>
 Signed-off-by: Thomas Lamprecht <t.lamprecht@proxmox.com>
+Signed-off-by: Max R. Carrara <m.carrara@proxmox.com>
 ---
- src/pybind/mgr/dashboard/module.py                  | 9 +++++++++
+ src/pybind/mgr/dashboard/module.py                  | 8 ++++++++
  src/pybind/mgr/dashboard/services/access_control.py | 3 +--
- 2 files changed, 10 insertions(+), 2 deletions(-)
+ 2 files changed, 9 insertions(+), 2 deletions(-)
 
 diff --git a/src/pybind/mgr/dashboard/module.py b/src/pybind/mgr/dashboard/module.py
-index 677d88fb678..fdc072edfbb 100644
+index 295403f6fe3..721042602be 100644
 --- a/src/pybind/mgr/dashboard/module.py
 +++ b/src/pybind/mgr/dashboard/module.py
-@@ -21,6 +21,7 @@ if TYPE_CHECKING:
+@@ -23,6 +23,7 @@ if TYPE_CHECKING:
      else:
          from typing_extensions import Literal
  
@@ -27,16 +28,15 @@ index 677d88fb678..fdc072edfbb 100644
  from mgr_module import CLIReadCommand, CLIWriteCommand, HandleCommandResult, \
      MgrModule, MgrStandbyModule, NotifyType, Option, _get_localized_key
  from mgr_util import ServerConfigException, build_url, \
-@@ -335,6 +336,8 @@ class Module(MgrModule, CherryPyConfig):
-                min=400, max=599),
+@@ -275,6 +276,7 @@ class Module(MgrModule, CherryPyConfig):
          Option(name='redirect_resolve_ip_addr', type='bool', default=False),
          Option(name='cross_origin_url', type='str', default=''),
-+        Option(name='sso_oauth2', type='bool', default=False),
+         Option(name='sso_oauth2', type='bool', default=False),
 +        Option(name='crypto_caller', type='str', default=''),
      ]
      MODULE_OPTIONS.extend(options_schema_list())
      for options in PLUGIN_MANAGER.hook.get_options() or []:
-@@ -348,6 +351,9 @@ class Module(MgrModule, CherryPyConfig):
+@@ -288,6 +290,9 @@ class Module(MgrModule, CherryPyConfig):
      def __init__(self, *args, **kwargs):
          super(Module, self).__init__(*args, **kwargs)
          CherryPyConfig.__init__(self)
@@ -46,7 +46,7 @@ index 677d88fb678..fdc072edfbb 100644
  
          mgr.init(self)
  
-@@ -565,6 +571,9 @@ class StandbyModule(MgrStandbyModule, CherryPyConfig):
+@@ -563,6 +568,9 @@ class StandbyModule(MgrStandbyModule, CherryPyConfig):
          super(StandbyModule, self).__init__(*args, **kwargs)
          CherryPyConfig.__init__(self)
          self.shutdown_event = threading.Event()
@@ -57,7 +57,7 @@ index 677d88fb678..fdc072edfbb 100644
          # We can set the global mgr instance to ourselves even though
          # we're just a standby, because it's enough for logging.
 diff --git a/src/pybind/mgr/dashboard/services/access_control.py b/src/pybind/mgr/dashboard/services/access_control.py
-index 490c6e3fcc9..89a7de5fbe4 100644
+index 440c125b81b..4ce10da2692 100644
 --- a/src/pybind/mgr/dashboard/services/access_control.py
 +++ b/src/pybind/mgr/dashboard/services/access_control.py
 @@ -12,6 +12,7 @@ from datetime import datetime, timedelta

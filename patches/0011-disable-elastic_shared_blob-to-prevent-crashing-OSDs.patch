@@ -13,15 +13,16 @@ https://ceph.io/assets/pdfs/events/2024/ceph-days-nyc/Diving%20Deep%20with%20Squ
 
 Signed-off-by: Stoiko Ivanov <s.ivanov@proxmox.com>
 Signed-off-by: Thomas Lamprecht <t.lamprecht@proxmox.com>
+Signed-off-by: Max R. Carrara <m.carrara@proxmox.com>
 ---
  src/common/options/global.yaml.in | 2 +-
  1 file changed, 1 insertion(+), 1 deletion(-)
 
 diff --git a/src/common/options/global.yaml.in b/src/common/options/global.yaml.in
-index a434852f88a..39217b781a2 100644
+index 5b7d589277c..bc15b16a266 100644
 --- a/src/common/options/global.yaml.in
 +++ b/src/common/options/global.yaml.in
-@@ -5010,7 +5010,7 @@ options:
+@@ -5116,7 +5116,7 @@ options:
    long_desc: Overwrites on snapped objects cause shared blob count to grow.
      It has a very negative performance effect. When enabled shared blob count
      is significantly reduced.

@@ -6,6 +6,7 @@ Subject: [PATCH] python-common/cryptotools: move internal crypto caller to new
 
 Signed-off-by: John Mulligan <jmulligan@redhat.com>
 Signed-off-by: Thomas Lamprecht <t.lamprecht@proxmox.com>
+Signed-off-by: Max R. Carrara <m.carrara@proxmox.com>
 ---
  .../ceph/cryptotools/cryptotools.py           | 131 +----------------
  .../ceph/cryptotools/internal.py              | 135 ++++++++++++++++++

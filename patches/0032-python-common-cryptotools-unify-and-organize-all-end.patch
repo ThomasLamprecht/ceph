@@ -14,6 +14,7 @@ a cli switch.
 
 Signed-off-by: John Mulligan <jmulligan@redhat.com>
 Signed-off-by: Thomas Lamprecht <t.lamprecht@proxmox.com>
+Signed-off-by: Max R. Carrara <m.carrara@proxmox.com>
 ---
  .../ceph/cryptotools/cryptotools.py           | 99 ++++++++++---------
  src/python-common/ceph/cryptotools/remote.py  |  2 +-

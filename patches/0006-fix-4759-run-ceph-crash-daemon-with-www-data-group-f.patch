@@ -5,6 +5,7 @@ Subject: [PATCH] fix #4759: run ceph-crash daemon with www-data group for
  access to conf
 
 Signed-off-by: Thomas Lamprecht <t.lamprecht@proxmox.com>
+Signed-off-by: Max R. Carrara <m.carrara@proxmox.com>
 ---
  src/ceph-crash.in | 2 +-
  1 file changed, 1 insertion(+), 1 deletion(-)

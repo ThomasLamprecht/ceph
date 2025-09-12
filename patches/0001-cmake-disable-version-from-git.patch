@@ -6,15 +6,16 @@ Subject: [PATCH] cmake: disable version from git
 to avoid that the parent (packaging) git info is used..
 
 Signed-off-by: Thomas Lamprecht <t.lamprecht@proxmox.com>
+Signed-off-by: Max R. Carrara <m.carrara@proxmox.com>
 ---
  src/CMakeLists.txt | 7 -------
  1 file changed, 7 deletions(-)
 
 diff --git a/src/CMakeLists.txt b/src/CMakeLists.txt
-index cbc5f55edf1..1cafac64320 100644
+index a0e8c583ab5..8cfeb056d4a 100644
 --- a/src/CMakeLists.txt
 +++ b/src/CMakeLists.txt
-@@ -35,17 +35,10 @@ configure_file(ceph-crash.in
+@@ -42,17 +42,10 @@ endif(WITH_LIBCEPHFS)
  # we pull the git version from .git
  option(ENABLE_GIT_VERSION "build Ceph with git version string" ON)
  if(ENABLE_GIT_VERSION)

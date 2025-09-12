@@ -9,6 +9,7 @@ bytes to pass to a function that is typed only as taking str!
 
 Signed-off-by: John Mulligan <jmulligan@redhat.com>
 Signed-off-by: Thomas Lamprecht <t.lamprecht@proxmox.com>
+Signed-off-by: Max R. Carrara <m.carrara@proxmox.com>
 ---
  src/pybind/mgr/tests/test_tls.py | 2 +-
  1 file changed, 1 insertion(+), 1 deletion(-)

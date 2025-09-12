@@ -5,6 +5,7 @@ Subject: [PATCH] python-common: Correct typo in private_key naming field.
 
 Signed-off-by: Paulo E. Castro <pecastro@wormholenet.com>
 Signed-off-by: Thomas Lamprecht <t.lamprecht@proxmox.com>
+Signed-off-by: Max R. Carrara <m.carrara@proxmox.com>
 ---
  src/python-common/ceph/cryptotools/remote.py | 2 +-
  1 file changed, 1 insertion(+), 1 deletion(-)

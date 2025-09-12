@@ -9,25 +9,24 @@ cephadm. Configure cephadm to always use the internal cryptocaller.
 
 Signed-off-by: John Mulligan <jmulligan@redhat.com>
 Signed-off-by: Thomas Lamprecht <t.lamprecht@proxmox.com>
+Signed-off-by: Max R. Carrara <m.carrara@proxmox.com>
 ---
- src/pybind/mgr/cephadm/module.py | 7 ++++++-
- 1 file changed, 6 insertions(+), 1 deletion(-)
+ src/pybind/mgr/cephadm/module.py | 5 +++++
+ 1 file changed, 5 insertions(+)
 
 diff --git a/src/pybind/mgr/cephadm/module.py b/src/pybind/mgr/cephadm/module.py
-index a8b71a1081e..c8319da8cd0 100644
+index 1d3f7e96a69..2248d449579 100644
 --- a/src/pybind/mgr/cephadm/module.py
 +++ b/src/pybind/mgr/cephadm/module.py
-@@ -35,7 +35,8 @@ from ceph.deployment.service_spec import \
-     HostPlacementSpec, IngressSpec, \
-     TunedProfileSpec, IscsiServiceSpec
+@@ -45,6 +45,7 @@ from ceph.deployment.service_spec import (
+ )
+ from ceph.deployment.drive_group import DeviceSelection
  from ceph.utils import str_to_datetime, datetime_to_str, datetime_now
--from cephadm.serve import CephadmServe
 +from ceph.cryptotools.select import choose_crypto_caller
-+from cephadm.serve import CephadmServe, REQUIRES_POST_ACTIONS
+ from cephadm.serve import CephadmServe, REQUIRES_POST_ACTIONS
  from cephadm.services.cephadmservice import CephadmDaemonDeploySpec
  from cephadm.http_server import CephadmHttpServer
- from cephadm.agent import CephadmAgentHelpers
-@@ -545,6 +546,10 @@ class CephadmOrchestrator(orchestrator.Orchestrator, MgrModule,
+@@ -496,6 +497,10 @@ class CephadmOrchestrator(orchestrator.Orchestrator, MgrModule,
          super(CephadmOrchestrator, self).__init__(*args, **kwargs)
          self._cluster_fsid: str = self.get('mon_map')['fsid']
          self.last_monmap: Optional[datetime.datetime] = None

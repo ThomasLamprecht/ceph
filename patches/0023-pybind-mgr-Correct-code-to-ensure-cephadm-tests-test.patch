@@ -6,16 +6,17 @@ Subject: [PATCH] pybind/mgr: Correct code to ensure
 
 Signed-off-by: Paulo E. Castro <pecastro@wormholenet.com>
 Signed-off-by: Thomas Lamprecht <t.lamprecht@proxmox.com>
+Signed-off-by: Max R. Carrara <m.carrara@proxmox.com>
 ---
  src/pybind/mgr/mgr_util.py                   | 2 +-
  src/python-common/ceph/cryptotools/remote.py | 1 +
  2 files changed, 2 insertions(+), 1 deletion(-)
 
 diff --git a/src/pybind/mgr/mgr_util.py b/src/pybind/mgr/mgr_util.py
-index 050e6844abf..2cd4398ea03 100644
+index d3fb5ae7019..f5c04f0189c 100644
 --- a/src/pybind/mgr/mgr_util.py
 +++ b/src/pybind/mgr/mgr_util.py
-@@ -582,8 +582,8 @@ def get_cert_issuer_info(crt: str) -> Tuple[Optional[str],Optional[str]]:
+@@ -680,8 +680,8 @@ def get_cert_issuer_info(crt: str) -> Tuple[Optional[str], Optional[str]]:
  def verify_tls(crt, key):
      # type: (str, str) -> int
      cc = ceph.cryptotools.remote.CryptoCaller()

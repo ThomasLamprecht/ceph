@@ -12,19 +12,20 @@ replaced by a systemd call that successfully stops the ceph services.
 
 Signed-off-by: Dominic Jäger <d.jaeger@proxmox.com>
 Signed-off-by: Thomas Lamprecht <t.lamprecht@proxmox.com>
+Signed-off-by: Max R. Carrara <m.carrara@proxmox.com>
 ---
- debian/ceph-base.prerm | 17 -----------------
- debian/ceph-mds.prerm  | 17 -----------------
- debian/ceph-mgr.prerm  | 17 -----------------
- debian/ceph-mon.prerm  | 17 -----------------
- debian/ceph-osd.prerm  | 17 -----------------
- 5 files changed, 85 deletions(-)
+ debian/ceph-base.prerm | 16 ----------------
+ debian/ceph-mds.prerm  | 16 ----------------
+ debian/ceph-mgr.prerm  | 16 ----------------
+ debian/ceph-mon.prerm  | 16 ----------------
+ debian/ceph-osd.prerm  | 16 ----------------
+ 5 files changed, 80 deletions(-)
 
 diff --git a/debian/ceph-base.prerm b/debian/ceph-base.prerm
-index bfd7d3d6fb2..37460790a09 100644
+index 12e5da7d633..37460790a09 100644
 --- a/debian/ceph-base.prerm
 +++ b/debian/ceph-base.prerm
-@@ -1,23 +1,6 @@
+@@ -1,22 +1,6 @@
  #!/bin/sh
  # vim: set noet ts=8:
  
@@ -32,7 +33,6 @@ index bfd7d3d6fb2..37460790a09 100644
 -
 -case "$1" in
 -    remove)
--	[ -x /sbin/stop ] && stop ceph-all || true
 -	invoke-rc.d ceph stop || {
 -	    RESULT=$?
 -	    if [ $RESULT != 100 ]; then
@@ -49,10 +49,10 @@ index bfd7d3d6fb2..37460790a09 100644
  
  exit 0
 diff --git a/debian/ceph-mds.prerm b/debian/ceph-mds.prerm
-index 654518a7d55..37460790a09 100644
+index 51f30d7f98e..37460790a09 100644
 --- a/debian/ceph-mds.prerm
 +++ b/debian/ceph-mds.prerm
-@@ -1,23 +1,6 @@
+@@ -1,22 +1,6 @@
  #!/bin/sh
  # vim: set noet ts=8:
  
@@ -60,7 +60,6 @@ index 654518a7d55..37460790a09 100644
 -
 -case "$1" in
 -    remove)
--	[ -x /sbin/stop ] && stop ceph-mds-all || :
 -	invoke-rc.d ceph stop mds || {
 -	    RESULT=$?
 -	    if [ $RESULT != 100 ]; then
@@ -77,10 +76,10 @@ index 654518a7d55..37460790a09 100644
  
  exit 0
 diff --git a/debian/ceph-mgr.prerm b/debian/ceph-mgr.prerm
-index 6fb7b245a78..37460790a09 100644
+index 5e4bf42c2dd..37460790a09 100644
 --- a/debian/ceph-mgr.prerm
 +++ b/debian/ceph-mgr.prerm
-@@ -1,23 +1,6 @@
+@@ -1,22 +1,6 @@
  #!/bin/sh
  # vim: set noet ts=8:
  
@@ -88,7 +87,6 @@ index 6fb7b245a78..37460790a09 100644
 -
 -case "$1" in
 -    remove)
--	[ -x /sbin/stop ] && stop ceph-mgr-all || :
 -	invoke-rc.d ceph stop mgr || {
 -	    RESULT=$?
 -	    if [ $RESULT != 100 ]; then
@@ -105,10 +103,10 @@ index 6fb7b245a78..37460790a09 100644
  
  exit 0
 diff --git a/debian/ceph-mon.prerm b/debian/ceph-mon.prerm
-index 5f64058a5da..37460790a09 100644
+index a31fc3c2184..37460790a09 100644
 --- a/debian/ceph-mon.prerm
 +++ b/debian/ceph-mon.prerm
-@@ -1,23 +1,6 @@
+@@ -1,22 +1,6 @@
  #!/bin/sh
  # vim: set noet ts=8:
  
@@ -116,7 +114,6 @@ index 5f64058a5da..37460790a09 100644
 -
 -case "$1" in
 -    remove)
--	[ -x /sbin/stop ] && stop ceph-mon-all || true
 -	invoke-rc.d ceph stop mon || {
 -	    RESULT=$?
 -	    if [ $RESULT != 100 ]; then
@@ -133,10 +130,10 @@ index 5f64058a5da..37460790a09 100644
  
  exit 0
 diff --git a/debian/ceph-osd.prerm b/debian/ceph-osd.prerm
-index 40f07b62152..37460790a09 100644
+index 93c459614e4..37460790a09 100644
 --- a/debian/ceph-osd.prerm
 +++ b/debian/ceph-osd.prerm
-@@ -1,23 +1,6 @@
+@@ -1,22 +1,6 @@
  #!/bin/sh
  # vim: set noet ts=8:
  
@@ -144,7 +141,6 @@ index 40f07b62152..37460790a09 100644
 -
 -case "$1" in
 -    remove)
--	[ -x /sbin/stop ] && stop ceph-osd-all || true
 -	invoke-rc.d ceph stop osd || {
 -	    RESULT=$?
 -	    if [ $RESULT != 100 ]; then

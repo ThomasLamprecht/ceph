@@ -4,6 +4,7 @@ Date: Thu, 26 Nov 2020 18:09:42 +0000
 Subject: [PATCH] fix service ordering, avoid Before=remote-fs-pre.target
 
 Signed-off-by: Thomas Lamprecht <t.lamprecht@proxmox.com>
+Signed-off-by: Max R. Carrara <m.carrara@proxmox.com>
 ---
  systemd/ceph-mds@.service.in     | 4 ++--
  systemd/ceph-mgr@.service.in     | 4 ++--
@@ -14,7 +15,7 @@ Signed-off-by: Thomas Lamprecht <t.lamprecht@proxmox.com>
  6 files changed, 11 insertions(+), 12 deletions(-)
 
 diff --git a/systemd/ceph-mds@.service.in b/systemd/ceph-mds@.service.in
-index afa36702f9c..03ffbc1fa10 100644
+index b2fc3374b56..122a8fb30f2 100644
 --- a/systemd/ceph-mds@.service.in
 +++ b/systemd/ceph-mds@.service.in
 @@ -2,8 +2,8 @@
@@ -27,9 +28,9 @@ index afa36702f9c..03ffbc1fa10 100644
 +Wants=network-online.target local-fs.target time-sync.target ceph-mds.target
  
  [Service]
- Environment=CLUSTER=ceph
+ EnvironmentFile=-@SYSTEMD_ENV_FILE@
 diff --git a/systemd/ceph-mgr@.service.in b/systemd/ceph-mgr@.service.in
-index 8fadc4746b3..79ea740a76c 100644
+index 42544d51cfe..c76d270c83d 100644
 --- a/systemd/ceph-mgr@.service.in
 +++ b/systemd/ceph-mgr@.service.in
 @@ -2,8 +2,8 @@
@@ -42,9 +43,9 @@ index 8fadc4746b3..79ea740a76c 100644
 +Wants=network-online.target local-fs.target time-sync.target ceph-mgr.target
  
  [Service]
- Environment=CLUSTER=ceph
+ EnvironmentFile=-@SYSTEMD_ENV_FILE@
 diff --git a/systemd/ceph-mon@.service.in b/systemd/ceph-mon@.service.in
-index 2eba83c3cc9..a2a619d7f36 100644
+index 06c6728422c..bb1ad69945d 100644
 --- a/systemd/ceph-mon@.service.in
 +++ b/systemd/ceph-mon@.service.in
 @@ -6,8 +6,8 @@ PartOf=ceph-mon.target
@@ -57,9 +58,9 @@ index 2eba83c3cc9..a2a619d7f36 100644
 +Wants=network-online.target local-fs.target time-sync.target ceph-mon.target
  
  [Service]
- Environment=CLUSTER=ceph
+ EnvironmentFile=-@SYSTEMD_ENV_FILE@
 diff --git a/systemd/ceph-osd@.service.in b/systemd/ceph-osd@.service.in
-index 046500efb66..c988cf34513 100644
+index 18c0591f560..385d9bcd02d 100644
 --- a/systemd/ceph-osd@.service.in
 +++ b/systemd/ceph-osd@.service.in
 @@ -2,8 +2,8 @@
@@ -72,9 +73,9 @@ index 046500efb66..c988cf34513 100644
 +Wants=network-online.target local-fs.target time-sync.target ceph-osd.target
  
  [Service]
- Environment=CLUSTER=ceph
+ EnvironmentFile=-@SYSTEMD_ENV_FILE@
 diff --git a/systemd/ceph-radosgw@.service.in b/systemd/ceph-radosgw@.service.in
-index b7474705506..5cccc21ee43 100644
+index 2146912b3ae..e40ec3c9343 100644
 --- a/systemd/ceph-radosgw@.service.in
 +++ b/systemd/ceph-radosgw@.service.in
 @@ -2,8 +2,8 @@
@@ -87,9 +88,9 @@ index b7474705506..5cccc21ee43 100644
 +Wants=network-online.target local-fs.target time-sync.target ceph-radosgw.target
  
  [Service]
- Environment=CLUSTER=ceph
+ EnvironmentFile=-@SYSTEMD_ENV_FILE@
 diff --git a/systemd/rbdmap.service.in b/systemd/rbdmap.service.in
-index 6644508cf0d..96f7d54e7c7 100644
+index 0933676d2ac..22cc0f97b72 100644
 --- a/systemd/rbdmap.service.in
 +++ b/systemd/rbdmap.service.in
 @@ -1,8 +1,7 @@

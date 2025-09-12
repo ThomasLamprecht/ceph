@@ -6,15 +6,16 @@ Subject: [PATCH] pybind/mgr: update mgr_util to use cryptotools CryptoCaller
 
 Signed-off-by: John Mulligan <jmulligan@redhat.com>
 Signed-off-by: Thomas Lamprecht <t.lamprecht@proxmox.com>
+Signed-off-by: Max R. Carrara <m.carrara@proxmox.com>
 ---
- src/pybind/mgr/mgr_util.py | 117 +++++++------------------------------
- 1 file changed, 22 insertions(+), 95 deletions(-)
+ src/pybind/mgr/mgr_util.py | 114 +++++++------------------------------
+ 1 file changed, 20 insertions(+), 94 deletions(-)
 
 diff --git a/src/pybind/mgr/mgr_util.py b/src/pybind/mgr/mgr_util.py
-index 94c52e1a399..050e6844abf 100644
+index 95194d6943d..d3fb5ae7019 100644
 --- a/src/pybind/mgr/mgr_util.py
 +++ b/src/pybind/mgr/mgr_util.py
-@@ -24,6 +24,7 @@ else:
+@@ -32,6 +32,7 @@ else:
  from typing import Tuple, Any, Callable, Optional, Dict, TYPE_CHECKING, TypeVar, List, Iterable, Generator, Generic, Iterator
  
  from ceph.deployment.utils import wrap_ipv6
@@ -22,7 +23,7 @@ index 94c52e1a399..050e6844abf 100644
  
  T = TypeVar('T')
  
-@@ -540,48 +541,18 @@ def create_self_signed_cert(organisation: str = 'Ceph',
+@@ -636,48 +637,18 @@ def create_self_signed_cert(organisation: str = 'Ceph',
      else:
          dname = {"O": organisation, "CN": common_name}
  
@@ -79,9 +80,9 @@ index 94c52e1a399..050e6844abf 100644
  
  
  def verify_cacrt(cert_fname):
-@@ -602,54 +573,21 @@ def verify_cacrt(cert_fname):
+@@ -699,55 +670,21 @@ def verify_cacrt(cert_fname):
  
- def get_cert_issuer_info(crt: str) -> Tuple[Optional[str],Optional[str]]:
+ def get_cert_issuer_info(crt: str) -> Tuple[Optional[str], Optional[str]]:
      """Basic validation of a ca cert"""
 -
 +    cc = ceph.cryptotools.remote.CryptoCaller()
@@ -112,11 +113,11 @@ index 94c52e1a399..050e6844abf 100644
 +    except ValueError as err:
 +        raise ServerConfigException(f'Invalid certificate key: {err}')
  
+ 
  def verify_tls(crt, key):
--    # type: (str, str) -> None
--    verify_cacrt_content(crt)
+     # type: (str, str) -> int
+-    days_to_expiration = verify_cacrt_content(crt)
 -
-+    # type: (str, str) -> int
 +    cc = ceph.cryptotools.remote.CryptoCaller()
 +    days_to_expiration = cc.verify_cacrt_content(crt)
      try:
@@ -141,11 +142,10 @@ index 94c52e1a399..050e6844abf 100644
 +        cc.verify_tls(crt, key)
 +    except ValueError as err:
 +        raise ServerConfigException(str(err))
-+    return days_to_expiration
+     return days_to_expiration
  
  
- def verify_tls_files(cert_fname, pkey_fname):
-@@ -888,16 +826,5 @@ def password_hash(password: Optional[str], salt_password: Optional[str] = None)
+@@ -989,16 +926,5 @@ def password_hash(password: Optional[str], salt_password: Optional[str] = None)
      if not salt_password:
          salt_password = ''
  

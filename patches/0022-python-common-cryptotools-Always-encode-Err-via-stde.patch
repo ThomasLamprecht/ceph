@@ -6,6 +6,7 @@ Subject: [PATCH] python-common/cryptotools: Always encode, Err via stderr and
 
 Signed-off-by: Paulo E. Castro <pecastro@wormholenet.com>
 Signed-off-by: Thomas Lamprecht <t.lamprecht@proxmox.com>
+Signed-off-by: Max R. Carrara <m.carrara@proxmox.com>
 ---
  src/pybind/mgr/tests/test_tls.py                  | 1 -
  src/python-common/ceph/cryptotools/cryptotools.py | 3 ++-

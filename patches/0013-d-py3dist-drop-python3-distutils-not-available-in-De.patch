@@ -12,20 +12,11 @@ it becomes clear that wasn't the correct choice.
 [0]: https://salsa.debian.org/cpython-team/python3-stdlib/-/commit/974943cee10b348c971084f5ef3c78e9b8d293b6
 
 Signed-off-by: Thomas Lamprecht <t.lamprecht@proxmox.com>
+Signed-off-by: Max R. Carrara <m.carrara@proxmox.com>
 ---
- debian/ceph-mgr.requires | 1 -
  debian/py3dist-overrides | 1 -
- 2 files changed, 2 deletions(-)
+ 1 file changed, 1 deletion(-)
 
-diff --git a/debian/ceph-mgr.requires b/debian/ceph-mgr.requires
-index 39336330c93..02596f3e125 100644
---- a/debian/ceph-mgr.requires
-+++ b/debian/ceph-mgr.requires
-@@ -3,4 +3,3 @@ pyOpenSSL
- cephfs
- ceph-argparse
- pyyaml
--distutils
 diff --git a/debian/py3dist-overrides b/debian/py3dist-overrides
 index b6358cf123e..73c20633a7d 100644
 --- a/debian/py3dist-overrides

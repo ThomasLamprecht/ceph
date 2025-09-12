@@ -9,6 +9,7 @@ to use the crypto caller interface.
 
 Signed-off-by: John Mulligan <jmulligan@redhat.com>
 Signed-off-by: Thomas Lamprecht <t.lamprecht@proxmox.com>
+Signed-off-by: Max R. Carrara <m.carrara@proxmox.com>
 ---
  .../mgr/dashboard/services/access_control.py  |  4 +-
  src/pybind/mgr/mgr_util.py                    | 12 ++---
@@ -18,7 +19,7 @@ Signed-off-by: Thomas Lamprecht <t.lamprecht@proxmox.com>
  create mode 100644 src/python-common/ceph/cryptotools/select.py
 
 diff --git a/src/pybind/mgr/dashboard/services/access_control.py b/src/pybind/mgr/dashboard/services/access_control.py
-index b427190203d..490c6e3fcc9 100644
+index ac3aee46148..440c125b81b 100644
 --- a/src/pybind/mgr/dashboard/services/access_control.py
 +++ b/src/pybind/mgr/dashboard/services/access_control.py
 @@ -23,7 +23,7 @@ from ..exceptions import PasswordPolicyException, PermissionNotValid, \
@@ -30,7 +31,7 @@ index b427190203d..490c6e3fcc9 100644
  
  logger = logging.getLogger('access_control')
  DEFAULT_FILE_DESC = 'password/secret'
-@@ -892,7 +892,7 @@ def ac_user_set_password_hash(_, username: str, inbuf: str):
+@@ -931,7 +931,7 @@ def ac_user_set_password_hash(_, username: str, inbuf: str):
      try:
          # make sure the hashed_password is actually a bcrypt hash
          # catch a ValueError if hashed_password is not valid.
@@ -40,10 +41,10 @@ index b427190203d..490c6e3fcc9 100644
  
          user = mgr.ACCESS_CTRL_DB.get_user(username)
 diff --git a/src/pybind/mgr/mgr_util.py b/src/pybind/mgr/mgr_util.py
-index 14fb26fbadb..f979aa4ceab 100644
+index b343f1a0384..8574bf5f728 100644
 --- a/src/pybind/mgr/mgr_util.py
 +++ b/src/pybind/mgr/mgr_util.py
-@@ -24,7 +24,7 @@ else:
+@@ -32,7 +32,7 @@ else:
  from typing import Tuple, Any, Callable, Optional, Dict, TYPE_CHECKING, TypeVar, List, Iterable, Generator, Generic, Iterator
  
  from ceph.deployment.utils import wrap_ipv6
@@ -52,7 +53,7 @@ index 14fb26fbadb..f979aa4ceab 100644
  
  T = TypeVar('T')
  
-@@ -541,7 +541,7 @@ def create_self_signed_cert(organisation: str = 'Ceph',
+@@ -637,7 +637,7 @@ def create_self_signed_cert(organisation: str = 'Ceph',
      else:
          dname = {"O": organisation, "CN": common_name}
  
@@ -61,7 +62,7 @@ index 14fb26fbadb..f979aa4ceab 100644
      pkey = cc.create_private_key()
      cert = cc.create_self_signed_cert(dname, pkey)
      return cert, pkey
-@@ -549,7 +549,7 @@ def create_self_signed_cert(organisation: str = 'Ceph',
+@@ -645,7 +645,7 @@ def create_self_signed_cert(organisation: str = 'Ceph',
  
  def certificate_days_to_expire(crt: str) -> int:
      try:
@@ -70,16 +71,16 @@ index 14fb26fbadb..f979aa4ceab 100644
          return cc.certificate_days_to_expire(crt)
      except ValueError as err:
          raise ServerConfigException(f'Invalid certificate: {err}')
-@@ -573,7 +573,7 @@ def verify_cacrt(cert_fname):
+@@ -670,7 +670,7 @@ def verify_cacrt(cert_fname):
  
- def get_cert_issuer_info(crt: str) -> Tuple[Optional[str],Optional[str]]:
+ def get_cert_issuer_info(crt: str) -> Tuple[Optional[str], Optional[str]]:
      """Basic validation of a ca cert"""
 -    cc = ceph.cryptotools.remote.CryptoCaller()
 +    cc = get_crypto_caller()
      try:
          return cc.get_cert_issuer_info(crt)
      except ValueError as err:
-@@ -581,7 +581,7 @@ def get_cert_issuer_info(crt: str) -> Tuple[Optional[str],Optional[str]]:
+@@ -679,7 +679,7 @@ def get_cert_issuer_info(crt: str) -> Tuple[Optional[str], Optional[str]]:
  
  def verify_tls(crt, key):
      # type: (str, str) -> int
@@ -88,7 +89,7 @@ index 14fb26fbadb..f979aa4ceab 100644
      try:
          days_to_expiration = cc.certificate_days_to_expire(crt)
          cc.verify_tls(crt, key)
-@@ -826,5 +826,5 @@ def password_hash(password: Optional[str], salt_password: Optional[str] = None)
+@@ -926,5 +926,5 @@ def password_hash(password: Optional[str], salt_password: Optional[str] = None)
      if not salt_password:
          salt_password = ''
  

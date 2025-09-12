@@ -9,6 +9,7 @@ the errors to a common location and do it once consistently.
 
 Signed-off-by: John Mulligan <jmulligan@redhat.com>
 Signed-off-by: Thomas Lamprecht <t.lamprecht@proxmox.com>
+Signed-off-by: Max R. Carrara <m.carrara@proxmox.com>
 ---
  src/python-common/ceph/cryptotools/internal.py | 11 +++++------
  1 file changed, 5 insertions(+), 6 deletions(-)
