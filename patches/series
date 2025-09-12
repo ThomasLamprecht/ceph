@@ -8,7 +8,6 @@
 0008-ceph-osd-postinst-do-not-always-reload-all-sysctl-se.patch
 0010-ceph-crash-change-order-of-client-names.patch
 0011-debian-pkg-record-python3-packaging-dependency-for-c.patch
-0012-d-control-fix-lua-dependencies-for-librgw2.patch
 0013-disable-elastic_shared_blob-to-prevent-crashing-OSDs.patch
 0014-mgr-stop-using-deprecated-API-to-initialize-Python.patch
 0015-mgr-set-argv-for-python-in-PyModuleRegistry.patch
